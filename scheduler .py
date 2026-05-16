@@ -1,18 +1,46 @@
 import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
-import holidays  # Dynamic holiday tracking
+import holidays  
 import calendar
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Physician On-Call Scheduler", layout="wide")
 
-# Initialize Session State with Core Team vs Coverage distinction
+# Inject a print button and global printer CSS styles to isolate just the calendar container during physical printing
+st.markdown("""
+<style>
+    @media print {
+        /* Hide everything by default during printing */
+        body *, .sidebar, button, [data-testid="stSidebar"], [data-testid="stHeader"], .stTabs [role="tablist"] {
+            visibility: hidden !important;
+            height: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+        /* Reveal only the active calendar display content block */
+        .print-container, .print-container * {
+            visibility: visible !important;
+        }
+        .print-container {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+        }
+        table {
+            page-break-inside: avoid !important;
+        }
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Initialize Session State with updated 36-day vacation caps
 if 'team' not in st.session_state:
     st.session_state['team'] = {
-        'Dr. CoreOne': {'vacation_used': 0, 'vacation_days': [], 'is_core': True},
-        'Dr. CoreTwo': {'vacation_used': 0, 'vacation_days': [], 'is_core': True},
-        'Dr. CoverageAlpha': {'vacation_used': 0, 'vacation_days': [], 'is_core': False},
+        'Dr. CoreOne': {'vacation_days': [], 'is_core': True},
+        'Dr. CoreTwo': {'vacation_days': [], 'is_core': True},
+        'Dr. CoverageAlpha': {'vacation_days': [], 'is_core': False},
     }
 
 if 'custom_holidays' not in st.session_state:
@@ -31,14 +59,50 @@ is_core_member = st.sidebar.checkbox("Is Core Team Member?", value=True)
 
 if st.sidebar.button("Add Physician"):
     if new_member and new_member not in st.session_state['team']:
-        st.session_state['team'][new_member] = {'vacation_used': 0, 'vacation_days': [], 'is_core': is_core_member}
+        st.session_state['team'][new_member] = {'vacation_days': [], 'is_core': is_core_member}
         st.success(f"Added {new_member}!")
 
-# 2. Holiday Management
+# 2. Advanced Vacation Tracker (36 Days Rule)
+st.sidebar.markdown("---")
+st.sidebar.subheader("🌴 Log Vacation Days")
+selected_doc = st.sidebar.selectbox("Select Physician", options=list(st.session_state['team'].keys()))
+vacation_date = st.sidebar.date_input("Select Date", date.today())
+
+# Define holiday tracking bounds for logic checks
+us_holidays = holidays.US(years=[date.today().year, date.today().year + 1])
+def check_is_holiday(dt):
+    return dt in us_holidays or (dt.month, dt.day) in st.session_state['custom_holidays']
+
+if st.sidebar.button("Log Vacation Day"):
+    # Enforce exclusivity check: cannot deduct vacation count for weekends or holidays
+    if vacation_date.weekday() >= 5:
+        st.sidebar.error("Cannot log vacation on a Weekend. Weekends are automatically excluded from the 36-day cap.")
+    elif check_is_holiday(vacation_date):
+        st.sidebar.error("Cannot log vacation on a Holiday. Designated holidays are automatically excluded.")
+    else:
+        current_vacations = st.session_state['team'][selected_doc]['vacation_days']
+        if vacation_date not in current_vacations:
+            # Enforce 36-day limit check for core staff
+            if st.session_state['team'][selected_doc]['is_core'] and len(current_vacations) >= 36:
+                st.sidebar.error(f"Cannot log. {selected_doc} has already hit the maximum 36-day vacation limit.")
+            else:
+                st.session_state['team'][selected_doc]['vacation_days'].append(vacation_date)
+                st.sidebar.success(f"Logged vacation for {selected_doc} on {vacation_date.strftime('%m/%d/%Y')}")
+        else:
+            st.sidebar.warning("This date is already logged as vacation.")
+
+# Display metrics
+st.sidebar.markdown("**Current Core Vacation Balances (Max 36):**")
+for doc_name, data in st.session_state['team'].items():
+    if data['is_core']:
+        used = len(data['vacation_days'])
+        st.sidebar.write(f"• {doc_name}: **{used} / 36 days used** (Remaining: {36 - used})")
+
+# 3. Holiday Management
 st.sidebar.markdown("---")
 st.sidebar.subheader("🎉 Holiday Management")
 custom_holiday_name = st.sidebar.text_input("Holiday Name")
-custom_holiday_date = st.sidebar.date_input("Holiday Date", date.today())
+custom_holiday_date = st.sidebar.date_input("Holiday Date", date.today(), key="holiday_picker")
 
 if st.sidebar.button("Add Holiday"):
     if custom_holiday_name:
@@ -51,14 +115,9 @@ st.title("📅 On-Call Scheduler")
 
 col1, col2 = st.columns(2)
 with col1:
-    start_date = st.date_input("Schedule Start Date (Choose a Friday)", date.today())
+    start_date = st.date_input("Schedule Start Date (Choose a Friday)", date.today(), key="main_start_date")
 with col2:
-    num_weeks = st.number_input("Duration (Weeks)", min_value=1, value=4)
-
-us_holidays = holidays.US(years=[start_date.year, start_date.year + 1])
-
-def is_holiday(dt):
-    return dt in us_holidays or (dt.month, dt.day) in st.session_state['custom_holidays']
+    num_weeks = st.number_input("Duration (Weeks)", min_value=1, value=4, key="main_duration")
 
 def get_holiday_name(dt):
     if dt in us_holidays:
@@ -85,10 +144,10 @@ if st.button("Generate Master Schedule"):
             weekend_end_date = mon
             weekend_label = "Regular Weekend"
             
-            if is_holiday(mon):
+            if check_is_holiday(mon):
                 weekend_end_date = tue
                 weekend_label = f"Long Weekend ({get_holiday_name(mon)})"
-            elif is_holiday(fri):
+            elif check_is_holiday(fri):
                 weekend_label = f"Long Weekend ({get_holiday_name(fri)})"
 
             assigned_weekend_doc = core_team[core_idx % len(core_team)]
@@ -101,9 +160,25 @@ if st.button("Generate Master Schedule"):
                 "Assigned Physician": assigned_weekend_doc
             })
             
-            assigned_weekday_doc = core_team[(core_idx + 1) % len(core_team)]
+            # --- TWEAK: SMART VACATION AUTO-FAILOVER FOR WEEKDAY BLOCKS ---
+            primary_weekday_doc = core_team[(core_idx + 1) % len(core_team)]
+            
             weekday_start = weekend_end_date
             next_friday = fri + timedelta(days=7)
+            
+            is_on_vacation = False
+            current_check = weekday_start
+            while current_check < next_friday:
+                if current_check in st.session_state['team'][primary_weekday_doc]['vacation_days']:
+                    is_on_vacation = True
+                    break
+                current_check += timedelta(days=1)
+            
+            if is_on_vacation:
+                alternatives = [doc for doc in core_team if doc != primary_weekday_doc]
+                assigned_weekday_doc = alternatives[0] if alternatives else primary_weekday_doc
+            else:
+                assigned_weekday_doc = primary_weekday_doc
             
             schedule_data.append({
                 "Start Date": weekday_start,
@@ -126,7 +201,7 @@ if not st.session_state['schedule'].empty:
     
     with tab1:
         st.subheader("Interactive Schedule Grid")
-        st.info("💡 Make assignments here via the dropdown menus. The visual calendar view in the next tab will update instantly!")
+        st.info("💡 Make manual overrides here via dropdown menus. The visual calendar view updates instantly!")
         
         def color_rows(row):
             if "Weekend" in row["Shift Type"]:
@@ -152,6 +227,12 @@ if not st.session_state['schedule'].empty:
     with tab2:
         st.subheader("Monthly On-Call Distribution")
         
+        # Add a print button utilizing JavaScript native window triggers
+        st.markdown('<button onclick="window.print()" style="background-color:#2563eb; color:white; border:none; padding:8px 16px; border-radius:4px; font-weight:bold; cursor:pointer; margin-bottom:15px;">🖨️ Print Calendar View</button>', unsafe_allow_html=True)
+        
+        # Enclose the calendar output block inside the scoped class container for clean printing
+        st.markdown('<div class="print-container">', unsafe_allow_html=True)
+        
         lookup = {}
         for _, row in st.session_state['schedule'].iterrows():
             d_start = row["Start Date"]
@@ -176,7 +257,7 @@ if not st.session_state['schedule'].empty:
                 cal = calendar.Calendar(firstweekday=6)
                 month_days = cal.monthdatescalendar(current_month.year, current_month.month)
                 
-                html = "<table style='width:100%; border-collapse:collapse; table-layout: fixed;'>"
+                html = "<table style='width:100%; border-collapse:collapse; table-layout: fixed; margin-bottom: 25px;'>"
                 html += "<tr style='background-color:#f1f3f5; text-align:center; font-weight:bold;'>"
                 for day_name in ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]:
                     html += f"<th style='padding:8px; border:1px solid #dee2e6;'>{day_name}</th>"
@@ -200,19 +281,21 @@ if not st.session_state['schedule'].empty:
                                 else:
                                     content += "<div style='font-size:10px; color:#94a3b8;'>Weekday</div>"
                                     
-                            if is_holiday(d):
+                            if check_is_holiday(d):
                                 bg = "#ffe3e3"
                                 content += f"<div style='font-size:10px; color:#dc2626; font-weight:bold;'>{get_holiday_name(d)}</div>"
                                 
-                            html += f"<td style='border:1px solid #dee2e6; background-color:{bg}; padding:6px Tara;'>"
+                            html += f"<td style='border:1px solid #dee2e6; background-color:{bg}; padding:6px;'>"
                             html += f"<span style='font-size:12px; font-weight:bold; color:#475569;'>{d.day}</span>"
                             html += content
                             html += "</td>"
                     html += "</tr>"
-                html += "</table><br>"
+                html += "</table>"
                 st.markdown(html, unsafe_allow_html=True)
                 
                 if current_month.month == 12:
                     current_month = current_month.replace(year=current_month.year + 1, month=1)
                 else:
                     current_month = current_month.replace(month=current_month.month + 1)
+        
+        st.markdown('</div>', unsafe_allow_html=True)

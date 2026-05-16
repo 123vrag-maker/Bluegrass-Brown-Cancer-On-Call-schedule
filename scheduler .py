@@ -54,9 +54,9 @@ def load_database():
         # Default fallback roster if Google Sheet is empty/new
         team = {
             'Dr. Vijay Raghavan': {'vacation_days': [], 'is_core': True},
-            'Dr. CoreTwo': {'vacation_days': [], 'is_core': True},
-            'Dr. CoverageAlpha': {'vacation_days': [], 'is_core': False},
-            'Dr. CoverageBeta': {'vacation_days': [], 'is_core': False}
+            'Dr. Iltaf Khan': {'vacation_days': [], 'is_core': True},
+            'Dr. Rohit Kumar': {'vacation_days': [], 'is_core': False},
+            'Dr. Abigail Chan': {'vacation_days': [], 'is_core': False}
         }
     
     # Load Schedule Data

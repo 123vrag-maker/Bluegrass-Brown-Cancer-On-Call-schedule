@@ -38,9 +38,10 @@ st.markdown("""
 # Initialize Session State with updated 36-day vacation caps
 if 'team' not in st.session_state:
     st.session_state['team'] = {
-        'Dr. CoreOne': {'vacation_days': [], 'is_core': True},
-        'Dr. CoreTwo': {'vacation_days': [], 'is_core': True},
-        'Dr. CoverageAlpha': {'vacation_days': [], 'is_core': False},
+        'Dr. Vijay Raghavan': {'vacation_days': [], 'is_core': True},
+        'Dr. Iltaf Khan': {'vacation_days': [], 'is_core': True},
+        'Dr. Rohit Kumar': {'vacation_days': [], 'is_core': False},
+        'Dr. Abigail Chan': {'vacation_days': [], 'is_core': False},
     }
 
 if 'custom_holidays' not in st.session_state:

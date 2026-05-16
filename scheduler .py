@@ -10,11 +10,8 @@ st.set_page_config(page_title="Team On-Call Scheduler", layout="wide")
 if 'team' not in st.session_state:
     st.session_state['team'] = {
         # Core Team (Rotates automatically, tracks vacation stats)
-        'Alice': {'vacation_used': 0, 'vacation_days': [], 'is_core': True},
-        'Bob':   {'vacation_used': 0, 'vacation_days': [], 'is_core': True},
-        'Charlie': {'vacation_used': 0, 'vacation_days': [], 'is_core': True},
-        'Diana': {'vacation_used': 0, 'vacation_days': [], 'is_core': True},
-        
+        'Dr.Vijay Raghavan': {'vacation_used': 0, 'vacation_days': [], 'is_core': True},
+        'Dr.Iltak Khan':   {'vacation_used': 0, 'vacation_days': [], 'is_core': True},
         # Coverage Physicians (Available for assignment, excluded from stats)
         'Covering Doc A': {'vacation_used': 0, 'vacation_days': [], 'is_core': False},
     }

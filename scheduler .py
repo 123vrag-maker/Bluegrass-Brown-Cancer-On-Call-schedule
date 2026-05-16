@@ -4,19 +4,16 @@ from datetime import date, timedelta
 import holidays  # Dynamic holiday tracking
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="Team On-Call Scheduler", layout="wide")
+st.set_page_config(page_title="Physician On-Call Scheduler", layout="wide")
 
 # Initialize Session State with Core Team vs Coverage distinction
 if 'team' not in st.session_state:
     st.session_state['team'] = {
-        # Core Team (Rotates automatically, tracks vacation stats)
-        'Dr.Vijay Raghavan': {'vacation_used': 0, 'vacation_days': [], 'is_core': True},
-        'Dr.Iltak Khan':   {'vacation_used': 0, 'vacation_days': [], 'is_core': True},
-        # Coverage Physicians (Available for assignment, excluded from stats)
-        'Covering Doc A': {'vacation_used': 0, 'vacation_days': [], 'is_core': False},
+        'Dr. CoreOne': {'vacation_used': 0, 'vacation_days': [], 'is_core': True},
+        'Dr. CoreTwo': {'vacation_used': 0, 'vacation_days': [], 'is_core': True},
+        'Dr. CoverageAlpha': {'vacation_used': 0, 'vacation_days': [], 'is_core': False},
     }
 
-# Initialize custom company holidays list
 if 'custom_holidays' not in st.session_state:
     st.session_state['custom_holidays'] = {}
 
@@ -26,111 +23,104 @@ if 'schedule' not in st.session_state:
 # --- SIDEBAR: MANAGEMENT ---
 st.sidebar.header("⚙️ Settings")
 
-# 1. Team Management
-st.sidebar.subheader("👤 Add Personnel")
-new_member = st.sidebar.text_input("Name")
-is_core_member = st.sidebar.checkbox("Is Core Team Member?", value=True, help="Uncheck this if they are only providing ad-hoc coverage.")
+# 1. Personnel Management
+st.sidebar.subheader("👤 Manage Roster")
+new_member = st.sidebar.text_input("Physician Name")
+is_core_member = st.sidebar.checkbox("Is Core Team Member?", value=True)
 
-if st.sidebar.button("Add Member"):
+if st.sidebar.button("Add Physician"):
     if new_member and new_member not in st.session_state['team']:
         st.session_state['team'][new_member] = {'vacation_used': 0, 'vacation_days': [], 'is_core': is_core_member}
-        role = "Core Team" if is_core_member else "Coverage"
-        st.success(f"Added {new_member} as {role}!")
+        st.success(f"Added {new_member}!")
 
-# 2. Permanent & Custom Holiday Management
+# 2. Holiday Management
 st.sidebar.markdown("---")
 st.sidebar.subheader("🎉 Holiday Management")
-st.sidebar.write("Standard US holidays apply automatically and roll over annually.")
+custom_holiday_name = st.sidebar.text_input("Holiday Name")
+custom_holiday_date = st.sidebar.date_input("Holiday Date", date.today())
 
-custom_holiday_name = st.sidebar.text_input("Custom Holiday Name (e.g., Company Day)")
-custom_holiday_date = st.sidebar.date_input("Holiday Date (Any Year)", date.today())
-
-if st.sidebar.button("Add/Update Holiday"):
+if st.sidebar.button("Add Holiday"):
     if custom_holiday_name:
         key = (custom_holiday_date.month, custom_holiday_date.day)
         st.session_state['custom_holidays'][key] = custom_holiday_name
-        st.sidebar.success(f"Added permanent holiday: {custom_holiday_name}")
+        st.sidebar.success(f"Added: {custom_holiday_name}")
 
-# Show current custom holidays
-if st.session_state['custom_holidays']:
-    st.sidebar.markdown("**Custom Annual Holidays:**")
-    for (m, d), name in list(st.session_state['custom_holidays'].items()):
-        st.sidebar.text(f"• {name} ({m}/{d})")
-        if st.sidebar.button(f"Remove {name}", key=f"del_{m}_{d}"):
-            # Clear key safely
-            st.session_state['custom_holidays'].pop((m, d), None)
-            st.rerun()
-
-# 3. Vacation Logger
-st.sidebar.markdown("---")
-st.sidebar.subheader("🌴 Log Vacation")
-# All members can log away days to avoid scheduling conflicts
-vacation_user = st.sidebar.selectbox("Select Person", list(st.session_state['team'].keys()))
-vacation_date = st.sidebar.date_input("Vacation Date", min_value=date.today())
-
-if st.sidebar.button("Book Vacation"):
-    user_record = st.session_state['team'][vacation_user]
-    if vacation_date not in user_record['vacation_days']:
-        user_record['vacation_days'].append(vacation_date)
-        user_record['vacation_used'] += 1
-        st.sidebar.success(f"Booked off for {vacation_user}")
-
-# --- MAIN APP: GENERATE SCHEDULE ---
-st.title("📅 On-Call Scheduler")
+# --- MAIN APP: GENERATE SHIFTS ---
+st.title("📅 On-Call Scheduler (Shift-Based)")
 
 col1, col2 = st.columns(2)
 with col1:
-    start_date = st.date_input("Schedule Start Date", date.today())
+    start_date = st.date_input("Schedule Start Date (Choose a Friday)", date.today())
 with col2:
     num_weeks = st.number_input("Duration (Weeks)", min_value=1, value=4)
 
-# Load standard US holidays dynamically for the relevant years
 us_holidays = holidays.US(years=[start_date.year, start_date.year + 1])
 
-if st.button("Generate Schedule"):
-    # CRITICAL: Only pull Core Team members for the automatic baseline rotation loop
-    core_team_list = [name for name, data in st.session_state['team'].items() if data.get('is_core', True)]
+def is_holiday(dt):
+    is_us = dt in us_holidays
+    is_cust = (dt.month, dt.day) in st.session_state['custom_holidays']
+    return is_us or is_cust
+
+def get_holiday_name(dt):
+    if dt in us_holidays:
+        return us_holidays.get(dt)
+    return st.session_state['custom_holidays'].get((dt.month, dt.day), "Holiday")
+
+if st.button("Generate Master Schedule"):
+    core_team = [name for name, data in st.session_state['team'].items() if data.get('is_core', True)]
+    all_docs = list(st.session_state['team'].keys())
     
-    if not core_team_list:
-        st.error("Please add core team members first!")
+    if len(core_team) < 2:
+        st.error("Please ensure you have at least 2 Core Physicians in the system.")
     else:
         schedule_data = []
-        current_date = start_date
-        week_idx = 0
+        # Align to the nearest Friday to keep the block logic perfectly consistent
+        current_friday = start_date + timedelta(days=(4 - start_date.weekday()) % 7)
+        core_idx = 0
         
-        for _ in range(num_weeks * 7):
-            is_us_holiday = current_date in us_holidays
-            custom_key = (current_date.month, current_date.day)
-            is_custom_holiday = custom_key in st.session_state['custom_holidays']
+        for week in range(num_weeks):
+            # --- 1. DETERMINE WEEKEND BOUNDARIES (Friday 12 PM to Mon/Tue 8 AM) ---
+            fri = current_friday
+            sat = fri + timedelta(days=1)
+            sun = fri + timedelta(days=2)
+            mon = fri + timedelta(days=3)
+            tue = fri + timedelta(days=4)
             
-            day_label = "Weekday"
-            if current_date.weekday() >= 5:
-                day_label = "Weekend"
-            if is_us_holiday:
-                day_label = f"Holiday ({us_holidays.get(current_date)})"
-            elif is_custom_holiday:
-                day_label = f"Holiday ({st.session_state['custom_holidays'][custom_key]})"
+            weekend_end_date = mon
+            weekend_label = "Regular Weekend"
             
-            # Rotation Logic using only core team, skipping if they have logged away days
-            assigned_person = core_team_list[week_idx % len(core_team_list)]
-            attempts = 0
-            while current_date in st.session_state['team'][assigned_person]['vacation_days'] and attempts < len(core_team_list):
-                 week_idx += 1
-                 assigned_person = core_team_list[week_idx % len(core_team_list)]
-                 attempts += 1
-            
-            if attempts >= len(core_team_list):
-                assigned_person = "UNCOVERED (Everyone away)"
+            # Holiday Extension Logic
+            if is_holiday(mon):
+                weekend_end_date = tue
+                weekend_label = f"Long Weekend ({get_holiday_name(mon)})"
+            elif is_holiday(fri):
+                weekend_label = f"Long Weekend ({get_holiday_name(fri)})"
+
+            # --- 2. ASSIGN WEEKEND CALL ---
+            # Baseline automatic rotation picks a Core doc, but the dropdown allows switching to Coverage
+            assigned_weekend_doc = core_team[core_idx % len(core_team)]
             
             schedule_data.append({
-                "Date": current_date,
-                "Day": current_date.strftime("%A"),
-                "Type": day_label,
-                "On-Call": assigned_person
+                "Time Window": f"{fri.strftime('%m/%d')} (12 PM) to {weekend_end_date.strftime('%m/%d')} (8 AM)",
+                "Shift Type": f"Weekend / {weekend_label}",
+                "Assigned Physician": assigned_weekend_doc
             })
             
-            week_idx += 1
-            current_date += timedelta(days=1)
+            # --- 3. ASSIGN NEXT WEEKDAY BLOCK (Mon/Tue 8 AM to Friday 12 PM) ---
+            # Weekdays are automatically locked to the Core team rotation
+            assigned_weekday_doc = core_team[(core_idx + 1) % len(core_team)]
+            weekday_start = weekend_end_date
+            next_friday = fri + timedelta(days=7)
+            
+            schedule_data.append({
+                "Time Window": f"{weekday_start.strftime('%m/%d')} (8 AM) to {next_friday.strftime('%m/%d')} (12 PM)",
+                "Shift Type": "Weekday Core Block",
+                "Assigned Physician": assigned_weekday_doc
+            })
+            
+            # Advance loop
+            core_idx += 1
+            current_friday = next_friday
 
         st.session_state['schedule'] = pd.DataFrame(schedule_data)
 
@@ -138,40 +128,23 @@ if st.button("Generate Schedule"):
 st.markdown("---")
 
 if not st.session_state['schedule'].empty:
-    st.subheader("📆 Schedule View")
-    st.info("💡 Tip: You can double-click any cell in the 'On-Call' column to manually select a coverage physician for specific dates!")
+    st.subheader("📆 Live Interactive Schedule Grid")
+    st.info("💡 Weekend shifts alternate between Core docs by default. Double-click any Weekend cell to assign a Coverage physician instead!")
     
-    # Highlight Weekends and Holidays dynamically
-    def highlight_days(row):
-        if "Holiday" in row.Type:
-            return ['background-color: #ffccd5'] * len(row)  # Light Red/Pink for holidays
-        elif row.Type == 'Weekend':
-            return ['background-color: #ffeba1'] * len(row)  # Yellow for weekends
+    def color_rows(row):
+        if "Weekend" in row["Shift Type"]:
+            return ['background-color: #f7f9fc; font-weight: bold'] * len(row)
         return [''] * len(row)
 
-    # st.data_editor allows you to drop down or type alternative coverage names manually right on the grid
     edited_df = st.data_editor(
-        st.session_state['schedule'].style.apply(highlight_days, axis=1), 
+        st.session_state['schedule'].style.apply(color_rows, axis=1),
         use_container_width=True,
         column_config={
-            "On-Call": st.column_config.SelectboxColumn(
-                "On-Call Personnel",
-                options=list(st.session_state['team'].keys()),
+            "Assigned Physician": st.column_config.SelectboxColumn(
+                "On-Call Doctor",
+                options=list(st.session_state['team'].keys()), # Pulls all names (Core + Coverage)
                 required=True
             )
         }
     )
-    # Save edits back to session state
     st.session_state['schedule'] = edited_df
-
-# Vacation Stats: ONLY displays core team metrics
-st.subheader("📊 Core Team Vacation Tracker")
-stats = []
-for name, data in st.session_state['team'].items():
-    if data.get('is_core', True):  # Filters out the coverage-only physicians completely
-        stats.append({"Name": name, "Days Used": data['vacation_used']})
-
-if stats:
-    st.table(pd.DataFrame(stats))
-else:
-    st.write("No core team members found.")

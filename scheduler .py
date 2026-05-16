@@ -9,10 +9,10 @@ st.set_page_config(page_title="Team On-Call Scheduler", layout="wide")
 # Initialize Session State
 if 'team' not in st.session_state:
     st.session_state['team'] = {
-        'Alice': {'vacation_used': 0, 'vacation_days': []},
-        'Bob':   {'vacation_used': 0, 'vacation_days': []},
-        'Charlie': {'vacation_used': 0, 'vacation_days': []},
-        'Diana': {'vacation_used': 0, 'vacation_days': []}
+        'Dr. Vijay Raghavan': {'vacation_used': 0, 'vacation_days': []},
+        'Dr.Iltaf Khan':   {'vacation_used': 0, 'vacation_days': []},
+        'Dr.Rohit Kumar': {'vacation_used': 0, 'vacation_days': []},
+        'Dr.Abigail Chan': {'vacation_used': 0, 'vacation_days': []}
     }
 
 # Initialize custom company holidays list

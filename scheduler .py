@@ -8,7 +8,7 @@ import calendar
 st.set_page_config(page_title="Physician On-Call Scheduler", layout="wide")
 
 # 🔗 DATABASE CONNECTION: Paste your copied Google Sheet URL here
-GSHEET_URL = "YOUR_GOOGLE_SHEET_URL_HERE"
+GSHEET_URL = "https://docs.google.com/spreadsheets/d/1BDCmSwVMjsq9tZk0ea7D_bVdYaXXXQTl4-mCj8wc8og/edit?usp=sharing"
 
 # Helper to convert sharing URL to a direct CSV export URL
 def get_export_url(sheet_name):

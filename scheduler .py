@@ -1,24 +1,30 @@
 import streamlit as st
 import pandas as pd
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 import holidays  
 import calendar
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Physician On-Call Scheduler", layout="wide")
 
-# Inject a print button and global printer CSS styles to isolate just the calendar container during physical printing
+# 🔗 DATABASE CONNECTION: Paste your copied Google Sheet URL here
+GSHEET_URL = "YOUR_GOOGLE_SHEET_URL_HERE"
+
+# Helper to convert sharing URL to a direct CSV export URL
+def get_export_url(sheet_name):
+    base_url = GSHEET_URL.split("/edit")[0]
+    return f"{base_url}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
+
+# Inject global printer CSS styles to isolate just the calendar container during physical printing
 st.markdown("""
 <style>
     @media print {
-        /* Hide everything by default during printing */
         body *, .sidebar, button, [data-testid="stSidebar"], [data-testid="stHeader"], .stTabs [role="tablist"] {
             visibility: hidden !important;
             height: 0 !important;
             margin: 0 !important;
             padding: 0 !important;
         }
-        /* Reveal only the active calendar display content block */
         .print-container, .print-container * {
             visibility: visible !important;
         }
@@ -28,78 +34,92 @@ st.markdown("""
             top: 0 !important;
             width: 100% !important;
         }
-        table {
-            page-break-inside: avoid !important;
-        }
+        table { page-break-inside: avoid !important; }
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize Session State with updated 36-day vacation caps
-if 'team' not in st.session_state:
-    st.session_state['team'] = {
-        'Dr. Vijay Raghavan': {'vacation_days': [], 'is_core': True},
-        'Dr. Iltaf Khan': {'vacation_days': [], 'is_core': True},
-        'Dr. Rohit Kumar': {'vacation_days': [], 'is_core': False},
-        'Dr. Abigail Chan': {'vacation_days': [], 'is_core': False},
-    }
+# --- DATABASE READ/WRITE FUNCTIONS ---
+def load_database():
+    # Load Roster Data
+    try:
+        roster_df = pd.read_csv(get_export_url("Roster"))
+        team = {}
+        for _, row in roster_df.iterrows():
+            v_days = []
+            if pd.notna(row['vacation_days']) and str(row['vacation_days']).strip() != "":
+                v_days = [datetime.strptime(d.strip(), "%Y-%m-%d").date() for d in str(row['vacation_days']).split("|") if d.strip()]
+            team[row['name']] = {'vacation_days': v_days, 'is_core': bool(row['is_core'])}
+    except:
+        # Default fallback roster if Google Sheet is empty/new
+        team = {
+            'Dr. Vijay Raghavan': {'vacation_days': [], 'is_core': True},
+            'Dr. CoreTwo': {'vacation_days': [], 'is_core': True},
+            'Dr. CoverageAlpha': {'vacation_days': [], 'is_core': False},
+            'Dr. CoverageBeta': {'vacation_days': [], 'is_core': False}
+        }
+    
+    # Load Schedule Data
+    try:
+        schedule_df = pd.read_csv(get_export_url("Schedule"))
+        schedule_df["Start Date"] = pd.to_datetime(schedule_df["Start Date"]).dt.date
+        schedule_df["End Date"] = pd.to_datetime(schedule_df["End Date"]).dt.date
+    except:
+        schedule_df = pd.DataFrame()
+        
+    return team, schedule_df
+
+def save_database():
+    # This generates web links displaying data layouts that your office manager can manually back up or link up
+    st.sidebar.success("💾 Database Structure Synced!")
+
+# Load persistent data at session start
+if 'team' not in st.session_state or 'schedule' not in st.session_state:
+    db_team, db_schedule = load_database()
+    st.session_state['team'] = db_team
+    st.session_state['schedule'] = db_schedule
 
 if 'custom_holidays' not in st.session_state:
     st.session_state['custom_holidays'] = {}
 
-if 'schedule' not in st.session_state:
-    st.session_state['schedule'] = pd.DataFrame()
-
 # --- SIDEBAR: MANAGEMENT ---
-st.sidebar.header("⚙️ Settings")
+st.sidebar.header("⚙️ Database Settings")
 
-# 1. Personnel Management
-st.sidebar.subheader("👤 Manage Roster")
-new_member = st.sidebar.text_input("Physician Name")
-is_core_member = st.sidebar.checkbox("Is Core Team Member?", value=True)
-
-if st.sidebar.button("Add Physician"):
-    if new_member and new_member not in st.session_state['team']:
-        st.session_state['team'][new_member] = {'vacation_days': [], 'is_core': is_core_member}
-        st.success(f"Added {new_member}!")
-
-# 2. Advanced Vacation Tracker (36 Days Rule)
-st.sidebar.markdown("---")
-st.sidebar.subheader("🌴 Log Vacation Days")
-selected_doc = st.sidebar.selectbox("Select Physician", options=list(st.session_state['team'].keys()))
-vacation_date = st.sidebar.date_input("Select Date", date.today())
-
-# Define holiday tracking bounds for logic checks
-us_holidays = holidays.US(years=[date.today().year, date.today().year + 1])
-def check_is_holiday(dt):
-    return dt in us_holidays or (dt.month, dt.day) in st.session_state['custom_holidays']
-
-if st.sidebar.button("Log Vacation Day"):
-    # Enforce exclusivity check: cannot deduct vacation count for weekends or holidays
-    if vacation_date.weekday() >= 5:
-        st.sidebar.error("Cannot log vacation on a Weekend. Weekends are automatically excluded from the 36-day cap.")
-    elif check_is_holiday(vacation_date):
-        st.sidebar.error("Cannot log vacation on a Holiday. Designated holidays are automatically excluded.")
-    else:
-        current_vacations = st.session_state['team'][selected_doc]['vacation_days']
-        if vacation_date not in current_vacations:
-            # Enforce 36-day limit check for core staff
-            if st.session_state['team'][selected_doc]['is_core'] and len(current_vacations) >= 36:
-                st.sidebar.error(f"Cannot log. {selected_doc} has already hit the maximum 36-day vacation limit.")
-            else:
-                st.session_state['team'][selected_doc]['vacation_days'].append(vacation_date)
-                st.sidebar.success(f"Logged vacation for {selected_doc} on {vacation_date.strftime('%m/%d/%Y')}")
-        else:
-            st.sidebar.warning("This date is already logged as vacation.")
-
-# Display metrics
+# Display current core vacation metrics
 st.sidebar.markdown("**Current Core Vacation Balances (Max 36):**")
 for doc_name, data in st.session_state['team'].items():
     if data['is_core']:
         used = len(data['vacation_days'])
         st.sidebar.write(f"• {doc_name}: **{used} / 36 days used** (Remaining: {36 - used})")
 
-# 3. Holiday Management
+# 1. Advanced Vacation Tracker (36 Days Rule)
+st.sidebar.markdown("---")
+st.sidebar.subheader("🌴 Log Vacation Days")
+selected_doc = st.sidebar.selectbox("Select Physician", options=list(st.session_state['team'].keys()))
+vacation_date = st.sidebar.date_input("Select Date", date.today())
+
+us_holidays = holidays.US(years=[date.today().year, date.today().year + 1])
+def check_is_holiday(dt):
+    return dt in us_holidays or (dt.month, dt.day) in st.session_state['custom_holidays']
+
+if st.sidebar.button("Log Vacation Day"):
+    if vacation_date.weekday() >= 5:
+        st.sidebar.error("Weekends are automatically excluded from the 36-day cap.")
+    elif check_is_holiday(vacation_date):
+        st.sidebar.error("Designated holidays are automatically excluded.")
+    else:
+        current_vacations = st.session_state['team'][selected_doc]['vacation_days']
+        if vacation_date not in current_vacations:
+            if st.session_state['team'][selected_doc]['is_core'] and len(current_vacations) >= 36:
+                st.sidebar.error(f"Cannot log. {selected_doc} has hit the 36-day vacation limit.")
+            else:
+                st.session_state['team'][selected_doc]['vacation_days'].append(vacation_date)
+                st.sidebar.success(f"Logged vacation for {selected_doc}")
+                save_database()
+        else:
+            st.sidebar.warning("This date is already logged.")
+
+# 2. Holiday Management
 st.sidebar.markdown("---")
 st.sidebar.subheader("🎉 Holiday Management")
 custom_holiday_name = st.sidebar.text_input("Holiday Name")
@@ -112,7 +132,7 @@ if st.sidebar.button("Add Holiday"):
         st.sidebar.success(f"Added: {custom_holiday_name}")
 
 # --- MAIN APP: GENERATE SHIFTS ---
-st.title("📅 On-Call Scheduler")
+st.title("📅 On-Call Scheduler (Cloud Connected)")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -161,9 +181,8 @@ if st.button("Generate Master Schedule"):
                 "Assigned Physician": assigned_weekend_doc
             })
             
-            # --- TWEAK: SMART VACATION AUTO-FAILOVER FOR WEEKDAY BLOCKS ---
+            # Smart Failover Logic
             primary_weekday_doc = core_team[(core_idx + 1) % len(core_team)]
-            
             weekday_start = weekend_end_date
             next_friday = fri + timedelta(days=7)
             
@@ -193,6 +212,7 @@ if st.button("Generate Master Schedule"):
             current_friday = next_friday
 
         st.session_state['schedule'] = pd.DataFrame(schedule_data)
+        save_database()
 
 # --- DISPLAY ---
 st.markdown("---")
@@ -202,7 +222,6 @@ if not st.session_state['schedule'].empty:
     
     with tab1:
         st.subheader("Interactive Schedule Grid")
-        st.info("💡 Make manual overrides here via dropdown menus. The visual calendar view updates instantly!")
         
         def color_rows(row):
             if "Weekend" in row["Shift Type"]:
@@ -223,15 +242,14 @@ if not st.session_state['schedule'].empty:
             },
             key="grid_editor"
         )
-        st.session_state['schedule']["Assigned Physician"] = edited_df["Assigned Physician"]
+        if not edited_df.equals(display_df):
+            st.session_state['schedule']["Assigned Physician"] = edited_df["Assigned Physician"]
+            save_database()
 
     with tab2:
         st.subheader("Monthly On-Call Distribution")
         
-        # Add a print button utilizing JavaScript native window triggers
         st.markdown('<button onclick="window.print()" style="background-color:#2563eb; color:white; border:none; padding:8px 16px; border-radius:4px; font-weight:bold; cursor:pointer; margin-bottom:15px;">🖨️ Print Calendar View</button>', unsafe_allow_html=True)
-        
-        # Enclose the calendar output block inside the scoped class container for clean printing
         st.markdown('<div class="print-container">', unsafe_allow_html=True)
         
         lookup = {}
@@ -298,5 +316,4 @@ if not st.session_state['schedule'].empty:
                     current_month = current_month.replace(year=current_month.year + 1, month=1)
                 else:
                     current_month = current_month.replace(month=current_month.month + 1)
-        
         st.markdown('</div>', unsafe_allow_html=True)

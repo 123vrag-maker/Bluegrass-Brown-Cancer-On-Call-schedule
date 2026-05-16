@@ -72,11 +72,10 @@ if st.button("Generate Master Schedule"):
         st.error("Please ensure you have at least 2 Core Physicians in the system.")
     else:
         schedule_data = []
-        # Align to nearest Friday
         current_friday = start_date + timedelta(days=(4 - start_date.weekday()) % 7)
         core_idx = 0
         
-        for week in range(num_weeks):
+        for week in range(int(num_weeks)):
             fri = current_friday
             sat = fri + timedelta(days=1)
             sun = fri + timedelta(days=2)
@@ -96,7 +95,7 @@ if st.button("Generate Master Schedule"):
             
             schedule_data.append({
                 "Start Date": fri,
-                "End Date": weekend_end_date - timedelta(days=1), # For mapping back to calendar days
+                "End Date": weekend_end_date - timedelta(days=1),
                 "Time Window": f"{fri.strftime('%m/%d')} (12 PM) to {weekend_end_date.strftime('%m/%d')} (8 AM)",
                 "Shift Type": f"Weekend / {weekend_label}",
                 "Assigned Physician": assigned_weekend_doc
@@ -123,8 +122,6 @@ if st.button("Generate Master Schedule"):
 st.markdown("---")
 
 if not st.session_state['schedule'].empty:
-    
-    # Create Tabs to switch easily between Spreadsheet view and Calendar view
     tab1, tab2 = st.tabs(["📝 Interactive Grid Editor", "📆 Visual Monthly Calendar View"])
     
     with tab1:
@@ -136,7 +133,6 @@ if not st.session_state['schedule'].empty:
                 return ['background-color: #f7f9fc; font-weight: bold'] * len(row)
             return [''] * len(row)
 
-        # Clean display columns for the editor
         display_df = st.session_state['schedule'][["Time Window", "Shift Type", "Assigned Physician"]]
         
         edited_df = st.data_editor(
@@ -151,13 +147,11 @@ if not st.session_state['schedule'].empty:
             },
             key="grid_editor"
         )
-        # Sync edits back to master dataframe
         st.session_state['schedule']["Assigned Physician"] = edited_df["Assigned Physician"]
 
     with tab2:
         st.subheader("Monthly On-Call Distribution")
         
-        # Build a day-by-day mapping lookup dictionary from our current state matrix
         lookup = {}
         for _, row in st.session_state['schedule'].iterrows():
             d_start = row["Start Date"]
@@ -167,7 +161,6 @@ if not st.session_state['schedule'].empty:
                 lookup[curr] = (row["Assigned Physician"], row["Shift Type"])
                 curr += timedelta(days=1)
                 
-        # Determine the months we need to draw based on our schedule bounds
         all_dates = list(lookup.keys())
         if all_dates:
             min_date = min(all_dates)
@@ -180,11 +173,9 @@ if not st.session_state['schedule'].empty:
             while current_month <= end_month:
                 st.write(f"### 🗓️ {current_month.strftime('%B %Y')}")
                 
-                # Render clean HTML Calendar grid
-                cal = calendar.Calendar(firstweekday=6) # Sunday start
+                cal = calendar.Calendar(firstweekday=6)
                 month_days = cal.monthdatescalendar(current_month.year, current_month.month)
                 
-                # HTML Table Header
                 html = "<table style='width:100%; border-collapse:collapse; table-layout: fixed;'>"
                 html += "<tr style='background-color:#f1f3f5; text-align:center; font-weight:bold;'>"
                 for day_name in ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]:
@@ -194,7 +185,6 @@ if not st.session_state['schedule'].empty:
                 for week_days in month_days:
                     html += "<tr style='height:90px; vertical-align:top;'>"
                     for d in week_days:
-                        # Out of month styling
                         if d.month != current_month.month:
                             html += "<td style='border:1px solid #dee2e6; background-color:#fafafa; color:#adb5bd; padding:6px;'></td>"
                         else:
@@ -205,16 +195,16 @@ if not st.session_state['schedule'].empty:
                                 doc, stype = lookup[d]
                                 content = f"<div style='font-weight:600; font-size:13px; color:#1e293b; margin-top:4px;'>{doc}</div>"
                                 if "Weekend" in stype:
-                                    bg = "#edf2f7" # Light blue/grey block for weekend shifts
+                                    bg = "#edf2f7"
                                     content += "<div style='font-size:10px; color:#64748b;'>Weekend</div>"
                                 else:
                                     content += "<div style='font-size:10px; color:#94a3b8;'>Weekday</div>"
                                     
                             if is_holiday(d):
-                                bg = "#ffe3e3" # Pink tint for holidays
+                                bg = "#ffe3e3"
                                 content += f"<div style='font-size:10px; color:#dc2626; font-weight:bold;'>{get_holiday_name(d)}</div>"
                                 
-                            html += f"<td style='border:1px solid #dee2e6; background-color:{bg}; padding:6px;'>"
+                            html += f"<td style='border:1px solid #dee2e6; background-color:{bg}; padding:6px Tara;'>"
                             html += f"<span style='font-size:12px; font-weight:bold; color:#475569;'>{d.day}</span>"
                             html += content
                             html += "</td>"
@@ -222,7 +212,6 @@ if not st.session_state['schedule'].empty:
                 html += "</table><br>"
                 st.markdown(html, unsafe_allow_html=True)
                 
-                # Advance to next month
                 if current_month.month == 12:
                     current_month = current_month.replace(year=current_month.year + 1, month=1)
                 else:

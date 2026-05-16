@@ -1,19 +1,14 @@
 import streamlit as st
 import pandas as pd
-from datetime import date, timedelta, datetime
+from datetime import date, timedelta
 import holidays  
 import calendar
+import os
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Physician On-Call Scheduler", layout="wide")
 
-# 🔗 DATABASE CONNECTION: Paste your copied Google Sheet URL here
-GSHEET_URL = "https://docs.google.com/spreadsheets/d/1BDCmSwVMjsq9tZk0ea7D_bVdYaXXXQTl4-mCj8wc8og/edit?usp=sharing"
-
-# Helper to convert sharing URL to a direct CSV export URL
-def get_export_url(sheet_name):
-    base_url = GSHEET_URL.split("/edit")[0]
-    return f"{base_url}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
+CSV_FILE = "master_schedule.csv"
 
 # Inject global printer CSS styles to isolate just the calendar container during physical printing
 st.markdown("""
@@ -39,53 +34,35 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- DATABASE READ/WRITE FUNCTIONS ---
-def load_database():
-    # Load Roster Data
-    try:
-        roster_df = pd.read_csv(get_export_url("Roster"))
-        team = {}
-        for _, row in roster_df.iterrows():
-            v_days = []
-            if pd.notna(row['vacation_days']) and str(row['vacation_days']).strip() != "":
-                v_days = [datetime.strptime(d.strip(), "%Y-%m-%d").date() for d in str(row['vacation_days']).split("|") if d.strip()]
-            team[row['name']] = {'vacation_days': v_days, 'is_core': bool(row['is_core'])}
-    except:
-        # Default fallback roster if Google Sheet is empty/new
-        team = {
-            'Dr. Vijay Raghavan': {'vacation_days': [], 'is_core': True},
-            'Dr. Iltaf Khan': {'vacation_days': [], 'is_core': True},
-            'Dr. Rohit Kumar': {'vacation_days': [], 'is_core': False},
-            'Dr. Abigail Chan': {'vacation_days': [], 'is_core': False}
-        }
-    
-    # Load Schedule Data
-    try:
-        schedule_df = pd.read_csv(get_export_url("Schedule"))
-        schedule_df["Start Date"] = pd.to_datetime(schedule_df["Start Date"]).dt.date
-        schedule_df["End Date"] = pd.to_datetime(schedule_df["End Date"]).dt.date
-    except:
-        schedule_df = pd.DataFrame()
-        
-    return team, schedule_df
-
-def save_database():
-    # This generates web links displaying data layouts that your office manager can manually back up or link up
-    st.sidebar.success("💾 Database Structure Synced!")
-
-# Load persistent data at session start
-if 'team' not in st.session_state or 'schedule' not in st.session_state:
-    db_team, db_schedule = load_database()
-    st.session_state['team'] = db_team
-    st.session_state['schedule'] = db_schedule
+# Initialize permanent team roster layout in Session State
+if 'team' not in st.session_state:
+    st.session_state['team'] = {
+        'Dr. Vijay Raghavan': {'vacation_days': [], 'is_core': True},
+        'Dr. Iltaf Khan': {'vacation_days': [], 'is_core': True},
+        'Dr. Rohit Kumar': {'vacation_days': [], 'is_core': False},
+        'Dr. Abigail Chan': {'vacation_days': [], 'is_core': False}
+    }
 
 if 'custom_holidays' not in st.session_state:
     st.session_state['custom_holidays'] = {}
 
-# --- SIDEBAR: MANAGEMENT ---
-st.sidebar.header("⚙️ Database Settings")
+# Load persistent schedule from CSV if it exists
+if 'schedule' not in st.session_state:
+    if os.path.exists(CSV_FILE):
+        try:
+            df = pd.read_csv(CSV_FILE)
+            df["Start Date"] = pd.to_datetime(df["Start Date"]).dt.date
+            df["End Date"] = pd.to_datetime(df["End Date"]).dt.date
+            st.session_state['schedule'] = df
+        except:
+            st.session_state['schedule'] = pd.DataFrame()
+    else:
+        st.session_state['schedule'] = pd.DataFrame()
 
-# Display current core vacation metrics
+# --- SIDEBAR: MANAGEMENT ---
+st.sidebar.header("⚙️ Settings")
+
+# Display core vacation metrics
 st.sidebar.markdown("**Current Core Vacation Balances (Max 36):**")
 for doc_name, data in st.session_state['team'].items():
     if data['is_core']:
@@ -115,7 +92,6 @@ if st.sidebar.button("Log Vacation Day"):
             else:
                 st.session_state['team'][selected_doc]['vacation_days'].append(vacation_date)
                 st.sidebar.success(f"Logged vacation for {selected_doc}")
-                save_database()
         else:
             st.sidebar.warning("This date is already logged.")
 
@@ -132,7 +108,7 @@ if st.sidebar.button("Add Holiday"):
         st.sidebar.success(f"Added: {custom_holiday_name}")
 
 # --- MAIN APP: GENERATE SHIFTS ---
-st.title("📅 On-Call Scheduler (Cloud Connected)")
+st.title("📅 On-Call Scheduler")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -212,7 +188,7 @@ if st.button("Generate Master Schedule"):
             current_friday = next_friday
 
         st.session_state['schedule'] = pd.DataFrame(schedule_data)
-        save_database()
+        st.session_state['schedule'].to_csv(CSV_FILE, index=False)
 
 # --- DISPLAY ---
 st.markdown("---")
@@ -242,9 +218,12 @@ if not st.session_state['schedule'].empty:
             },
             key="grid_editor"
         )
+        
+        # Save structural cell edits to the tracking CSV file permanently
         if not edited_df.equals(display_df):
             st.session_state['schedule']["Assigned Physician"] = edited_df["Assigned Physician"]
-            save_database()
+            st.session_state['schedule'].to_csv(CSV_FILE, index=False)
+            st.success("💾 Schedule changes saved permanently!")
 
     with tab2:
         st.subheader("Monthly On-Call Distribution")

@@ -38,17 +38,17 @@ st.markdown("""
 if 'team' not in st.session_state:
     st.session_state['team'] = {
         'Dr. Vijay Raghavan': {'vacation_days': [], 'is_core': True},
-        'Dr. Iltaf Khan': {'vacation_days': [], 'is_core': True},
-        'Dr. Rohit Kumar': {'vacation_days': [], 'is_core': False},
-        'Dr. Abigail Chan': {'vacation_days': [], 'is_core': False}
+        'Dr. CoreTwo': {'vacation_days': [], 'is_core': True},
+        'Dr. CoverageAlpha': {'vacation_days': [], 'is_core': False},
+        'Dr. CoverageBeta': {'vacation_days': [], 'is_core': False}
     }
 
 if 'custom_holidays' not in st.session_state:
     st.session_state['custom_holidays'] = {}
 
-# Load persistent schedule from CSV if it exists
+# --- CRITICAL FIX: SOLIDIFY THE FILE LOADING PRIORITIES ---
 if 'schedule' not in st.session_state:
-    if os.path.exists(CSV_FILE):
+    if os.path.exists(CSV_FILE) and os.path.getsize(CSV_FILE) > 0:
         try:
             df = pd.read_csv(CSV_FILE)
             df["Start Date"] = pd.to_datetime(df["Start Date"]).dt.date
@@ -58,6 +58,22 @@ if 'schedule' not in st.session_state:
             st.session_state['schedule'] = pd.DataFrame()
     else:
         st.session_state['schedule'] = pd.DataFrame()
+
+# --- CRITICAL FIX: INSTANT AUTOMATED SAVE FUNCTION ---
+def handle_grid_edit():
+    """Triggered instantly the moment a dropdown cell is changed, committing it to disk."""
+    if "grid_editor" in st.session_state and st.session_state["grid_editor"]:
+        edits = st.session_state["grid_editor"].get("edited_rows", {})
+        if edits and not st.session_state['schedule'].empty:
+            for row_idx, changes in edits.items():
+                if "Assigned Physician" in changes:
+                    new_doc = changes["Assigned Physician"]
+                    # Map structural index directly to master dataframe layout
+                    st.session_state['schedule'].at[int(row_idx), "Assigned Physician"] = new_doc
+            
+            # Instantly write out to file to completely prevent baseline resets
+            st.session_state['schedule'].to_csv(CSV_FILE, index=False)
+            st.toast("💾 Changes saved permanently to database!", icon="✅")
 
 # --- SIDEBAR: MANAGEMENT ---
 st.sidebar.header("⚙️ Settings")
@@ -206,6 +222,7 @@ if not st.session_state['schedule'].empty:
 
         display_df = st.session_state['schedule'][["Time Window", "Shift Type", "Assigned Physician"]]
         
+        # --- FIXED PARAMETER: ON_CHANGE INTERCEPT FOR INSTANT SINGLE-CLICK WRITING ---
         edited_df = st.data_editor(
             display_df.style.apply(color_rows, axis=1),
             use_container_width=True,
@@ -216,14 +233,9 @@ if not st.session_state['schedule'].empty:
                     required=True
                 )
             },
-            key="grid_editor"
+            key="grid_editor",
+            on_change=handle_grid_edit
         )
-        
-        # Save structural cell edits to the tracking CSV file permanently
-        if not edited_df.equals(display_df):
-            st.session_state['schedule']["Assigned Physician"] = edited_df["Assigned Physician"]
-            st.session_state['schedule'].to_csv(CSV_FILE, index=False)
-            st.success("💾 Schedule changes saved permanently!")
 
     with tab2:
         st.subheader("Monthly On-Call Distribution")

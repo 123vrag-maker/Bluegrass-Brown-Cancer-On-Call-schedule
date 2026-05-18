@@ -21,33 +21,18 @@ if 'team' not in st.session_state:
 if 'custom_holidays' not in st.session_state:
     st.session_state['custom_holidays'] = {}
 
-# --- CRITICAL RE-ORDER: FORCE RE-READ DIRECTLY FROM DISK UPFRONT ---
-if os.path.exists(CSV_FILE) and os.path.getsize(CSV_FILE) > 0:
-    try:
-        # Load file directly as the single source of truth to protect edits across tabs
-        df_disk = pd.read_csv(CSV_FILE)
-        df_disk["Start Date"] = pd.to_datetime(df_disk["Start Date"]).dt.date
-        df_disk["End Date"] = pd.to_datetime(df_disk["End Date"]).dt.date
-        st.session_state['schedule'] = df_disk
-    except:
-        if 'schedule' not in st.session_state:
+# --- SOURCE OF TRUTH LOADING ---
+if 'schedule' not in st.session_state:
+    if os.path.exists(CSV_FILE) and os.path.getsize(CSV_FILE) > 0:
+        try:
+            df_disk = pd.read_csv(CSV_FILE)
+            df_disk["Start Date"] = pd.to_datetime(df_disk["Start Date"]).dt.date
+            df_disk["End Date"] = pd.to_datetime(df_disk["End Date"]).dt.date
+            st.session_state['schedule'] = df_disk
+        except:
             st.session_state['schedule'] = pd.DataFrame()
-else:
-    if 'schedule' not in st.session_state:
+    else:
         st.session_state['schedule'] = pd.DataFrame()
-
-# --- HIGH PRIORITY INTERCEPT: AUTO-SAVE EDITS BEFORE RENDERING TAB UI ---
-if "grid_editor" in st.session_state and st.session_state["grid_editor"]:
-    grid_edits = st.session_state["grid_editor"].get("edited_rows", {})
-    if grid_edits and not st.session_state['schedule'].empty:
-        for row_idx, data_changes in grid_edits.items():
-            if "Assigned Physician" in data_changes:
-                updated_doctor = data_changes["Assigned Physician"]
-                st.session_state['schedule'].at[int(row_idx), "Assigned Physician"] = updated_doctor
-        
-        # Write directly to the repository file system instantly
-        st.session_state['schedule'].to_csv(CSV_FILE, index=False)
-        st.toast("✅ Shift changes written permanently to database file!", icon="💾")
 
 # Inject print styles to isolate just the calendar container during physical printing
 st.markdown("""
@@ -205,14 +190,35 @@ if st.button("Generate Master Schedule"):
         st.session_state['schedule'].to_csv(CSV_FILE, index=False)
         st.rerun()
 
-# --- DISPLAY TABS ---
+# --- DISPLAY CONFIGURATION ---
 st.markdown("---")
 
 if not st.session_state['schedule'].empty:
+    
+    # 💾 THE ULTIMATE OVERRIDE BUTTON: Placed outside and completely above the tab memory
+    if st.button("💾 LOCK IN & SAVE GRID EDITS", type="primary"):
+        if "grid_editor" in st.session_state and st.session_state["grid_editor"]:
+            grid_changes = st.session_state["grid_editor"].get("edited_rows", {})
+            if grid_changes:
+                for r_idx, v_changes in grid_changes.items():
+                    if "Assigned Physician" in v_changes:
+                        st.session_state['schedule'].at[int(r_idx), "Assigned Physician"] = v_changes["Assigned Physician"]
+                
+                # Force commit directly to file system before any tabs reload
+                st.session_state['schedule'].to_csv(CSV_FILE, index=False)
+                st.success("Changes permanently saved to database! You can safely switch tabs or print now.")
+                st.mini_rerun() if hasattr(st, "mini_rerun") else st.rerun()
+            else:
+                st.info("No modifications detected in the table to save.")
+        else:
+            st.info("Click directly into the grid table cells below to change coverage physicians first.")
+
+    # Render Tabs securely now that saving is insulated
     tab1, tab2 = st.tabs(["📝 Interactive Grid Editor", "📆 Visual Monthly Calendar View"])
     
     with tab1:
         st.subheader("Interactive Schedule Grid")
+        st.caption("Instructions: 1. Click a cell to select a physician dropdown. 2. When finished making overrides, click the big blue 'LOCK IN & SAVE GRID EDITS' button directly above before switching tabs.")
         
         def color_rows(row):
             if "Weekend" in row["Shift Type"]:

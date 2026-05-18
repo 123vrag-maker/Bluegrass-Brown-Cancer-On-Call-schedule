@@ -5,12 +5,51 @@ import holidays
 import calendar
 import os
 
-# --- CONFIGURATION ---
+# --- INITIAL APP SETUP & STATE CONFIGURATION ---
 st.set_page_config(page_title="Physician On-Call Scheduler", layout="wide")
-
 CSV_FILE = "master_schedule.csv"
 
-# Inject global printer CSS styles to isolate just the calendar container during physical printing
+# Pre-populate your stable hospital roster structure layout
+if 'team' not in st.session_state:
+    st.session_state['team'] = {
+        'Dr. Vijay Raghavan': {'vacation_days': [], 'is_core': True},
+        'Dr. Iltaf Khan': {'vacation_days': [], 'is_core': True},
+        'Dr. Rohit Kumar': {'vacation_days': [], 'is_core': False},
+        'Dr. Abigail Chan': {'vacation_days': [], 'is_core': False}
+    }
+
+if 'custom_holidays' not in st.session_state:
+    st.session_state['custom_holidays'] = {}
+
+# --- CRITICAL RE-ORDER: FORCE RE-READ DIRECTLY FROM DISK UPFRONT ---
+if os.path.exists(CSV_FILE) and os.path.getsize(CSV_FILE) > 0:
+    try:
+        # Load file directly as the single source of truth to protect edits across tabs
+        df_disk = pd.read_csv(CSV_FILE)
+        df_disk["Start Date"] = pd.to_datetime(df_disk["Start Date"]).dt.date
+        df_disk["End Date"] = pd.to_datetime(df_disk["End Date"]).dt.date
+        st.session_state['schedule'] = df_disk
+    except:
+        if 'schedule' not in st.session_state:
+            st.session_state['schedule'] = pd.DataFrame()
+else:
+    if 'schedule' not in st.session_state:
+        st.session_state['schedule'] = pd.DataFrame()
+
+# --- HIGH PRIORITY INTERCEPT: AUTO-SAVE EDITS BEFORE RENDERING TAB UI ---
+if "grid_editor" in st.session_state and st.session_state["grid_editor"]:
+    grid_edits = st.session_state["grid_editor"].get("edited_rows", {})
+    if grid_edits and not st.session_state['schedule'].empty:
+        for row_idx, data_changes in grid_edits.items():
+            if "Assigned Physician" in data_changes:
+                updated_doctor = data_changes["Assigned Physician"]
+                st.session_state['schedule'].at[int(row_idx), "Assigned Physician"] = updated_doctor
+        
+        # Write directly to the repository file system instantly
+        st.session_state['schedule'].to_csv(CSV_FILE, index=False)
+        st.toast("✅ Shift changes written permanently to database file!", icon="💾")
+
+# Inject print styles to isolate just the calendar container during physical printing
 st.markdown("""
 <style>
     @media print {
@@ -33,47 +72,6 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
-
-# Initialize permanent team roster layout in Session State
-if 'team' not in st.session_state:
-    st.session_state['team'] = {
-        'Dr. Vijay Raghavan': {'vacation_days': [], 'is_core': True},
-        'Dr. Iltaf Khan': {'vacation_days': [], 'is_core': True},
-        'Dr. Rohit Kumar': {'vacation_days': [], 'is_core': False},
-        'Dr. Abigail Chan': {'vacation_days': [], 'is_core': False}
-    }
-
-if 'custom_holidays' not in st.session_state:
-    st.session_state['custom_holidays'] = {}
-
-# --- CRITICAL FIX: SOLIDIFY THE FILE LOADING PRIORITIES ---
-if 'schedule' not in st.session_state:
-    if os.path.exists(CSV_FILE) and os.path.getsize(CSV_FILE) > 0:
-        try:
-            df = pd.read_csv(CSV_FILE)
-            df["Start Date"] = pd.to_datetime(df["Start Date"]).dt.date
-            df["End Date"] = pd.to_datetime(df["End Date"]).dt.date
-            st.session_state['schedule'] = df
-        except:
-            st.session_state['schedule'] = pd.DataFrame()
-    else:
-        st.session_state['schedule'] = pd.DataFrame()
-
-# --- CRITICAL FIX: INSTANT AUTOMATED SAVE FUNCTION ---
-def handle_grid_edit():
-    """Triggered instantly the moment a dropdown cell is changed, committing it to disk."""
-    if "grid_editor" in st.session_state and st.session_state["grid_editor"]:
-        edits = st.session_state["grid_editor"].get("edited_rows", {})
-        if edits and not st.session_state['schedule'].empty:
-            for row_idx, changes in edits.items():
-                if "Assigned Physician" in changes:
-                    new_doc = changes["Assigned Physician"]
-                    # Map structural index directly to master dataframe layout
-                    st.session_state['schedule'].at[int(row_idx), "Assigned Physician"] = new_doc
-            
-            # Instantly write out to file to completely prevent baseline resets
-            st.session_state['schedule'].to_csv(CSV_FILE, index=False)
-            st.toast("💾 Changes saved permanently to database!", icon="✅")
 
 # --- SIDEBAR: MANAGEMENT ---
 st.sidebar.header("⚙️ Settings")
@@ -205,8 +203,9 @@ if st.button("Generate Master Schedule"):
 
         st.session_state['schedule'] = pd.DataFrame(schedule_data)
         st.session_state['schedule'].to_csv(CSV_FILE, index=False)
+        st.rerun()
 
-# --- DISPLAY ---
+# --- DISPLAY TABS ---
 st.markdown("---")
 
 if not st.session_state['schedule'].empty:
@@ -222,7 +221,6 @@ if not st.session_state['schedule'].empty:
 
         display_df = st.session_state['schedule'][["Time Window", "Shift Type", "Assigned Physician"]]
         
-        # --- FIXED PARAMETER: ON_CHANGE INTERCEPT FOR INSTANT SINGLE-CLICK WRITING ---
         edited_df = st.data_editor(
             display_df.style.apply(color_rows, axis=1),
             use_container_width=True,
@@ -233,8 +231,7 @@ if not st.session_state['schedule'].empty:
                     required=True
                 )
             },
-            key="grid_editor",
-            on_change=handle_grid_edit
+            key="grid_editor"
         )
 
     with tab2:

@@ -13,9 +13,9 @@ CSV_FILE = "master_schedule.csv"
 if 'team' not in st.session_state:
     st.session_state['team'] = {
         'Dr. Vijay Raghavan': {'vacation_days': [], 'is_core': True},
-        'Dr. CoreTwo': {'vacation_days': [], 'is_core': True},
-        'Dr. CoverageAlpha': {'vacation_days': [], 'is_core': False},
-        'Dr. CoverageBeta': {'vacation_days': [], 'is_core': False}
+        'Dr. Iltaf Khan': {'vacation_days': [], 'is_core': True},
+        'Dr. Rohit Kumar': {'vacation_days': [], 'is_core': False},
+        'Dr. Abigail Chan': {'vacation_days': [], 'is_core': False}
     }
 
 if 'custom_holidays' not in st.session_state:

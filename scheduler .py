@@ -13,9 +13,9 @@ CSV_FILE = "master_schedule.csv"
 if 'team' not in st.session_state:
     st.session_state['team'] = {
         'Dr. Vijay Raghavan': {'vacation_days': [], 'is_core': True},
-        'Dr. Iltaf Khan': {'vacation_days': [], 'is_core': True},
-        'Dr. Rohit Kumar': {'vacation_days': [], 'is_core': False},
-        'Dr. Abigail Chan': {'vacation_days': [], 'is_core': False}
+        'Dr. CoreTwo': {'vacation_days': [], 'is_core': True},
+        'Dr. CoverageAlpha': {'vacation_days': [], 'is_core': False},
+        'Dr. CoverageBeta': {'vacation_days': [], 'is_core': False}
     }
 
 if 'custom_holidays' not in st.session_state:
@@ -61,16 +61,10 @@ st.markdown("""
 # --- SIDEBAR: MANAGEMENT ---
 st.sidebar.header("⚙️ Settings")
 
-# Display core vacation metrics
-st.sidebar.markdown("**Current Core Vacation Balances (Max 36):**")
-for doc_name, data in st.session_state['team'].items():
-    if data['is_core']:
-        used = len(data['vacation_days'])
-        st.sidebar.write(f"• {doc_name}: **{used} / 36 days used** (Remaining: {36 - used})")
-
-# 1. Advanced Vacation Tracker (36 Days Rule)
+# 1. Away Logging (Purely for Auto-Failover now)
 st.sidebar.markdown("---")
-st.sidebar.subheader("🌴 Log Vacation Days")
+st.sidebar.subheader("🌴 Log Away Dates")
+st.sidebar.caption("Dates logged here automatically shift weekday call duties to the alternate core physician.")
 selected_doc = st.sidebar.selectbox("Select Physician", options=list(st.session_state['team'].keys()))
 vacation_date = st.sidebar.date_input("Select Date", date.today())
 
@@ -78,21 +72,13 @@ us_holidays = holidays.US(years=[date.today().year, date.today().year + 1])
 def check_is_holiday(dt):
     return dt in us_holidays or (dt.month, dt.day) in st.session_state['custom_holidays']
 
-if st.sidebar.button("Log Vacation Day"):
-    if vacation_date.weekday() >= 5:
-        st.sidebar.error("Weekends are automatically excluded from the 36-day cap.")
-    elif check_is_holiday(vacation_date):
-        st.sidebar.error("Designated holidays are automatically excluded.")
+if st.sidebar.button("Log Away Date"):
+    current_vacations = st.session_state['team'][selected_doc]['vacation_days']
+    if vacation_date not in current_vacations:
+        st.session_state['team'][selected_doc]['vacation_days'].append(vacation_date)
+        st.sidebar.success(f"Logged {selected_doc} as away on {vacation_date.strftime('%m/%d/%Y')}")
     else:
-        current_vacations = st.session_state['team'][selected_doc]['vacation_days']
-        if vacation_date not in current_vacations:
-            if st.session_state['team'][selected_doc]['is_core'] and len(current_vacations) >= 36:
-                st.sidebar.error(f"Cannot log. {selected_doc} has hit the 36-day vacation limit.")
-            else:
-                st.session_state['team'][selected_doc]['vacation_days'].append(vacation_date)
-                st.sidebar.success(f"Logged vacation for {selected_doc}")
-        else:
-            st.sidebar.warning("This date is already logged.")
+        st.sidebar.warning("This date is already logged.")
 
 # 2. Holiday Management
 st.sidebar.markdown("---")
@@ -195,7 +181,7 @@ st.markdown("---")
 
 if not st.session_state['schedule'].empty:
     
-    # 💾 THE ULTIMATE OVERRIDE BUTTON: Placed outside and completely above the tab memory
+    # 💾 THE ULTIMATE OVERRIDE BUTTON
     if st.button("💾 LOCK IN & SAVE GRID EDITS", type="primary"):
         if "grid_editor" in st.session_state and st.session_state["grid_editor"]:
             grid_changes = st.session_state["grid_editor"].get("edited_rows", {})
@@ -204,7 +190,6 @@ if not st.session_state['schedule'].empty:
                     if "Assigned Physician" in v_changes:
                         st.session_state['schedule'].at[int(r_idx), "Assigned Physician"] = v_changes["Assigned Physician"]
                 
-                # Force commit directly to file system before any tabs reload
                 st.session_state['schedule'].to_csv(CSV_FILE, index=False)
                 st.success("Changes permanently saved to database! You can safely switch tabs or print now.")
                 st.mini_rerun() if hasattr(st, "mini_rerun") else st.rerun()
@@ -213,7 +198,6 @@ if not st.session_state['schedule'].empty:
         else:
             st.info("Click directly into the grid table cells below to change coverage physicians first.")
 
-    # Render Tabs securely now that saving is insulated
     tab1, tab2 = st.tabs(["📝 Interactive Grid Editor", "📆 Visual Monthly Calendar View"])
     
     with tab1:

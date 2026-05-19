@@ -61,24 +61,72 @@ st.markdown("""
 # --- SIDEBAR: MANAGEMENT ---
 st.sidebar.header("⚙️ Settings")
 
-# 1. Away Logging (Purely for Auto-Failover now)
+# 1. Manage Away Dates (Add and Remove)
 st.sidebar.markdown("---")
-st.sidebar.subheader("🌴 Log Away Dates")
+st.sidebar.subheader("🌴 Manage Away Dates")
 st.sidebar.caption("Dates logged here automatically shift weekday call duties to the alternate core physician.")
+
 selected_doc = st.sidebar.selectbox("Select Physician", options=list(st.session_state['team'].keys()))
-vacation_date = st.sidebar.date_input("Select Date", date.today())
 
-us_holidays = holidays.US(years=[date.today().year, date.today().year + 1])
-def check_is_holiday(dt):
-    return dt in us_holidays or (dt.month, dt.day) in st.session_state['custom_holidays']
+# ---- SECTION A: ADD DATES ----
+st.sidebar.markdown("**1. Add Dates (Single or Range)**")
+# By passing an empty tuple, Streamlit allows range selection natively
+date_range = st.sidebar.date_input(
+    "Select Date(s)", 
+    value=(), 
+    help="Click a date once for a single day. Click a start date and an end date to select a full block."
+)
 
-if st.sidebar.button("Log Away Date"):
-    current_vacations = st.session_state['team'][selected_doc]['vacation_days']
-    if vacation_date not in current_vacations:
-        st.session_state['team'][selected_doc]['vacation_days'].append(vacation_date)
-        st.sidebar.success(f"Logged {selected_doc} as away on {vacation_date.strftime('%m/%d/%Y')}")
+if st.sidebar.button("➕ Log Away Date(s)"):
+    if isinstance(date_range, tuple) or isinstance(date_range, list):
+        if len(date_range) == 2:  # A range was selected
+            start_d, end_d = date_range[0], date_range[1]
+            delta = end_d - start_d
+            added_count = 0
+            for i in range(delta.days + 1):
+                day = start_d + timedelta(days=i)
+                if day not in st.session_state['team'][selected_doc]['vacation_days']:
+                    st.session_state['team'][selected_doc]['vacation_days'].append(day)
+                    added_count += 1
+            st.sidebar.success(f"Logged {added_count} days away for {selected_doc}.")
+        elif len(date_range) == 1:  # A single date was selected
+            day = date_range[0]
+            if day not in st.session_state['team'][selected_doc]['vacation_days']:
+                st.session_state['team'][selected_doc]['vacation_days'].append(day)
+                st.sidebar.success(f"Logged {day.strftime('%m/%d/%Y')} away for {selected_doc}.")
+            else:
+                st.sidebar.warning("This date is already logged.")
+        else:
+            st.sidebar.warning("Please select a date from the calendar.")
     else:
-        st.sidebar.warning("This date is already logged.")
+        # Fallback just in case
+        if date_range not in st.session_state['team'][selected_doc]['vacation_days']:
+            st.session_state['team'][selected_doc]['vacation_days'].append(date_range)
+            st.sidebar.success(f"Logged {date_range.strftime('%m/%d/%Y')} away.")
+
+# ---- SECTION B: REMOVE DATES ----
+st.sidebar.markdown("**2. Reverse / Remove Dates**")
+current_vacations = st.session_state['team'][selected_doc].get('vacation_days', [])
+
+if current_vacations:
+    current_vacations.sort()
+    dates_to_remove = st.sidebar.multiselect(
+        "Select currently logged dates to delete:", 
+        options=current_vacations,
+        format_func=lambda x: x.strftime('%m/%d/%Y')
+    )
+    
+    if st.sidebar.button("❌ Remove Selected"):
+        if dates_to_remove:
+            for d in dates_to_remove:
+                st.session_state['team'][selected_doc]['vacation_days'].remove(d)
+            st.sidebar.success("Dates successfully removed!")
+            st.rerun()  # Instantly refreshes the UI to show the dates are gone
+        else:
+            st.sidebar.warning("Select dates from the dropdown menu first.")
+else:
+    st.sidebar.caption("No dates currently logged for this physician.")
+
 
 # 2. Holiday Management
 st.sidebar.markdown("---")
@@ -92,6 +140,15 @@ if st.sidebar.button("Add Holiday"):
         st.session_state['custom_holidays'][key] = custom_holiday_name
         st.sidebar.success(f"Added: {custom_holiday_name}")
 
+us_holidays = holidays.US(years=[date.today().year, date.today().year + 1])
+def check_is_holiday(dt):
+    return dt in us_holidays or (dt.month, dt.day) in st.session_state['custom_holidays']
+
+def get_holiday_name(dt):
+    if dt in us_holidays:
+        return us_holidays.get(dt)
+    return st.session_state['custom_holidays'].get((dt.month, dt.day), "Holiday")
+
 # --- MAIN APP: GENERATE SHIFTS ---
 st.title("📅 On-Call Scheduler")
 
@@ -100,11 +157,6 @@ with col1:
     start_date = st.date_input("Schedule Start Date (Choose a Friday)", date.today(), key="main_start_date")
 with col2:
     num_weeks = st.number_input("Duration (Weeks)", min_value=1, value=4, key="main_duration")
-
-def get_holiday_name(dt):
-    if dt in us_holidays:
-        return us_holidays.get(dt)
-    return st.session_state['custom_holidays'].get((dt.month, dt.day), "Holiday")
 
 if st.button("Generate Master Schedule"):
     core_team = [name for name, data in st.session_state['team'].items() if data.get('is_core', True)]
@@ -192,7 +244,7 @@ if not st.session_state['schedule'].empty:
                 
                 st.session_state['schedule'].to_csv(CSV_FILE, index=False)
                 st.success("Changes permanently saved to database! You can safely switch tabs or print now.")
-                st.mini_rerun() if hasattr(st, "mini_rerun") else st.rerun()
+                st.rerun()
             else:
                 st.info("No modifications detected in the table to save.")
         else:

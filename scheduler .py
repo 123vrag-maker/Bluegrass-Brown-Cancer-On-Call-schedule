@@ -4,24 +4,65 @@ from datetime import date, timedelta
 import holidays  
 import calendar
 import os
+import json
 
 # --- INITIAL APP SETUP & STATE CONFIGURATION ---
 st.set_page_config(page_title="Physician On-Call Scheduler", layout="wide")
 CSV_FILE = "master_schedule.csv"
+CONFIG_FILE = "roster_settings.json"
 
-# Pre-populate your stable hospital roster structure layout
+def save_roster_config():
+    """Instantly locks away dates and custom holidays into a permanent background file."""
+    data = {'team': {}, 'custom_holidays': {}}
+    for doc, info in st.session_state['team'].items():
+        data['team'][doc] = {
+            'vacation_days': [d.isoformat() for d in info['vacation_days']],
+            'is_core': info['is_core']
+        }
+    for k, v in st.session_state['custom_holidays'].items():
+        data['custom_holidays'][f"{k[0]:02d}-{k[1]:02d}"] = v
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(data, f)
+
+# --- SOURCE OF TRUTH: SETTINGS & AWAY DATES LOADING ---
 if 'team' not in st.session_state:
-    st.session_state['team'] = {
-        'Dr. Vijay Raghavan': {'vacation_days': [], 'is_core': True},
-        'Dr. Iltaf Khan': {'vacation_days': [], 'is_core': True},
-        'Dr. Rohit Kumar': {'vacation_days': [], 'is_core': False},
-        'Dr. Abigail Chan': {'vacation_days': [], 'is_core': False}
-    }
+    if os.path.exists(CONFIG_FILE) and os.path.getsize(CONFIG_FILE) > 0:
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                data = json.load(f)
+            
+            # Rebuild Team Dictionary
+            team = {}
+            for doc, info in data.get('team', {}).items():
+                v_days = [date.fromisoformat(d) for d in info.get('vacation_days', [])]
+                team[doc] = {'vacation_days': v_days, 'is_core': info.get('is_core', True)}
+            st.session_state['team'] = team
+            
+            # Rebuild Holidays
+            hols = {}
+            for k, v in data.get('custom_holidays', {}).items():
+                m, d = map(int, k.split('-'))
+                hols[(m, d)] = v
+            st.session_state['custom_holidays'] = hols
+        except Exception as e:
+            # Fallback if file is completely empty or corrupted
+            st.session_state['team'] = {
+                'Dr. Vijay Raghavan': {'vacation_days': [], 'is_core': True},
+                'Dr. Iltaf Khan': {'vacation_days': [], 'is_core': True},
+                'Dr. Rohit Kumar': {'vacation_days': [], 'is_core': False},
+                'Dr. Abigail Chan': {'vacation_days': [], 'is_core': False}
+            }
+            st.session_state['custom_holidays'] = {}
+    else:
+        st.session_state['team'] = {
+            'Dr. Vijay Raghavan': {'vacation_days': [], 'is_core': True},
+            'Dr. CoreTwo': {'vacation_days': [], 'is_core': True},
+            'Dr. CoverageAlpha': {'vacation_days': [], 'is_core': False},
+            'Dr. CoverageBeta': {'vacation_days': [], 'is_core': False}
+        }
+        st.session_state['custom_holidays'] = {}
 
-if 'custom_holidays' not in st.session_state:
-    st.session_state['custom_holidays'] = {}
-
-# --- SOURCE OF TRUTH LOADING ---
+# --- SOURCE OF TRUTH: SCHEDULE LOADING ---
 if 'schedule' not in st.session_state:
     if os.path.exists(CSV_FILE) and os.path.getsize(CSV_FILE) > 0:
         try:
@@ -64,13 +105,12 @@ st.sidebar.header("⚙️ Settings")
 # 1. Manage Away Dates (Add and Remove)
 st.sidebar.markdown("---")
 st.sidebar.subheader("🌴 Manage Away Dates")
-st.sidebar.caption("Dates logged here automatically shift weekday call duties to the alternate core physician.")
+st.sidebar.caption("Dates logged here permanently shift weekday call duties to the alternate core physician.")
 
 selected_doc = st.sidebar.selectbox("Select Physician", options=list(st.session_state['team'].keys()))
 
 # ---- SECTION A: ADD DATES ----
 st.sidebar.markdown("**1. Add Dates (Single or Range)**")
-# By passing an empty tuple, Streamlit allows range selection natively
 date_range = st.sidebar.date_input(
     "Select Date(s)", 
     value=(), 
@@ -88,21 +128,23 @@ if st.sidebar.button("➕ Log Away Date(s)"):
                 if day not in st.session_state['team'][selected_doc]['vacation_days']:
                     st.session_state['team'][selected_doc]['vacation_days'].append(day)
                     added_count += 1
-            st.sidebar.success(f"Logged {added_count} days away for {selected_doc}.")
+            save_roster_config() # 💾 INSTANT SAVE TO DISK
+            st.sidebar.success(f"Permanently logged {added_count} days away for {selected_doc}.")
         elif len(date_range) == 1:  # A single date was selected
             day = date_range[0]
             if day not in st.session_state['team'][selected_doc]['vacation_days']:
                 st.session_state['team'][selected_doc]['vacation_days'].append(day)
-                st.sidebar.success(f"Logged {day.strftime('%m/%d/%Y')} away for {selected_doc}.")
+                save_roster_config() # 💾 INSTANT SAVE TO DISK
+                st.sidebar.success(f"Permanently logged {day.strftime('%m/%d/%Y')} away for {selected_doc}.")
             else:
                 st.sidebar.warning("This date is already logged.")
         else:
             st.sidebar.warning("Please select a date from the calendar.")
     else:
-        # Fallback just in case
         if date_range not in st.session_state['team'][selected_doc]['vacation_days']:
             st.session_state['team'][selected_doc]['vacation_days'].append(date_range)
-            st.sidebar.success(f"Logged {date_range.strftime('%m/%d/%Y')} away.")
+            save_roster_config() # 💾 INSTANT SAVE TO DISK
+            st.sidebar.success(f"Permanently logged {date_range.strftime('%m/%d/%Y')} away.")
 
 # ---- SECTION B: REMOVE DATES ----
 st.sidebar.markdown("**2. Reverse / Remove Dates**")
@@ -120,8 +162,9 @@ if current_vacations:
         if dates_to_remove:
             for d in dates_to_remove:
                 st.session_state['team'][selected_doc]['vacation_days'].remove(d)
+            save_roster_config() # 💾 INSTANT SAVE TO DISK
             st.sidebar.success("Dates successfully removed!")
-            st.rerun()  # Instantly refreshes the UI to show the dates are gone
+            st.rerun()
         else:
             st.sidebar.warning("Select dates from the dropdown menu first.")
 else:
@@ -138,7 +181,8 @@ if st.sidebar.button("Add Holiday"):
     if custom_holiday_name:
         key = (custom_holiday_date.month, custom_holiday_date.day)
         st.session_state['custom_holidays'][key] = custom_holiday_name
-        st.sidebar.success(f"Added: {custom_holiday_name}")
+        save_roster_config() # 💾 INSTANT SAVE TO DISK
+        st.sidebar.success(f"Permanently added: {custom_holiday_name}")
 
 us_holidays = holidays.US(years=[date.today().year, date.today().year + 1])
 def check_is_holiday(dt):

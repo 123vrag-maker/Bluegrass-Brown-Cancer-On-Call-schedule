@@ -1,0 +1,79 @@
+{
+    "team": {
+        "Dr. Vijay Raghavan": {
+            "vacation_days": [],
+            "is_core": true
+        },
+        "Dr. Iltaf Khan": {
+            "vacation_days": [],
+            "is_core": true
+        },
+        "Dr. Rohit Kumar": {
+            "vacation_days": [],
+            "is_core": false
+        },
+        "Dr. Abigail Chan": {
+            "vacation_days": [],
+            "is_core": false
+        }
+    },
+    "custom_holidays": {},
+    "schedule": [
+        {
+            "Start Date": "2026-05-22",
+            "End Date": "2026-05-25",
+            "Time Window": "05/22 (12 PM) to 05/26 (8 AM)",
+            "Shift Type": "Weekend / Long Weekend (Memorial Day)",
+            "Assigned Physician": "Dr. Vijay Raghavan"
+        },
+        {
+            "Start Date": "2026-05-26",
+            "End Date": "2026-05-28",
+            "Time Window": "05/26 (8 AM) to 05/29 (12 PM)",
+            "Shift Type": "Weekday Core Block",
+            "Assigned Physician": "Dr. Iltaf Khan"
+        },
+        {
+            "Start Date": "2026-05-29",
+            "End Date": "2026-05-31",
+            "Time Window": "05/29 (12 PM) to 06/01 (8 AM)",
+            "Shift Type": "Weekend / Regular Weekend",
+            "Assigned Physician": "Dr. Iltaf Khan"
+        },
+        {
+            "Start Date": "2026-06-01",
+            "End Date": "2026-06-04",
+            "Time Window": "06/01 (8 AM) to 06/05 (12 PM)",
+            "Shift Type": "Weekday Core Block",
+            "Assigned Physician": "Dr. Vijay Raghavan"
+        },
+        {
+            "Start Date": "2026-06-05",
+            "End Date": "2026-06-07",
+            "Time Window": "06/05 (12 PM) to 06/08 (8 AM)",
+            "Shift Type": "Weekend / Regular Weekend",
+            "Assigned Physician": "Dr. Vijay Raghavan"
+        },
+        {
+            "Start Date": "2026-06-08",
+            "End Date": "2026-06-11",
+            "Time Window": "06/08 (8 AM) to 06/12 (12 PM)",
+            "Shift Type": "Weekday Core Block",
+            "Assigned Physician": "Dr. Iltaf Khan"
+        },
+        {
+            "Start Date": "2026-06-12",
+            "End Date": "2026-06-14",
+            "Time Window": "06/12 (12 PM) to 06/15 (8 AM)",
+            "Shift Type": "Weekend / Regular Weekend",
+            "Assigned Physician": "Dr. Iltaf Khan"
+        },
+        {
+            "Start Date": "2026-06-15",
+            "End Date": "2026-06-18",
+            "Time Window": "06/15 (8 AM) to 06/19 (12 PM)",
+            "Shift Type": "Weekday Core Block",
+            "Assigned Physician": "Dr. Vijay Raghavan"
+        }
+    ]
+}

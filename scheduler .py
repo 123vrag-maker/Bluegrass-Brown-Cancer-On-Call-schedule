@@ -1,79 +1,27 @@
 import streamlit as st
 import pandas as pd
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 import holidays  
 import calendar
-import os
 import json
 
 # --- INITIAL APP SETUP & STATE CONFIGURATION ---
 st.set_page_config(page_title="Physician On-Call Scheduler", layout="wide")
-CSV_FILE = "master_schedule.csv"
-CONFIG_FILE = "roster_settings.json"
 
-def save_roster_config():
-    """Instantly locks away dates and custom holidays into a permanent background file."""
-    data = {'team': {}, 'custom_holidays': {}}
-    for doc, info in st.session_state['team'].items():
-        data['team'][doc] = {
-            'vacation_days': [d.isoformat() for d in info['vacation_days']],
-            'is_core': info['is_core']
-        }
-    for k, v in st.session_state['custom_holidays'].items():
-        data['custom_holidays'][f"{k[0]:02d}-{k[1]:02d}"] = v
-    with open(CONFIG_FILE, 'w') as f:
-        json.dump(data, f)
-
-# --- SOURCE OF TRUTH: SETTINGS & AWAY DATES LOADING ---
+# Pre-populate your stable hospital roster structure layout
 if 'team' not in st.session_state:
-    if os.path.exists(CONFIG_FILE) and os.path.getsize(CONFIG_FILE) > 0:
-        try:
-            with open(CONFIG_FILE, 'r') as f:
-                data = json.load(f)
-            
-            # Rebuild Team Dictionary
-            team = {}
-            for doc, info in data.get('team', {}).items():
-                v_days = [date.fromisoformat(d) for d in info.get('vacation_days', [])]
-                team[doc] = {'vacation_days': v_days, 'is_core': info.get('is_core', True)}
-            st.session_state['team'] = team
-            
-            # Rebuild Holidays
-            hols = {}
-            for k, v in data.get('custom_holidays', {}).items():
-                m, d = map(int, k.split('-'))
-                hols[(m, d)] = v
-            st.session_state['custom_holidays'] = hols
-        except Exception as e:
-            # Fallback if file is completely empty or corrupted
-            st.session_state['team'] = {
-                'Dr. Vijay Raghavan': {'vacation_days': [], 'is_core': True},
-                'Dr. Iltaf Khan': {'vacation_days': [], 'is_core': True},
-                'Dr. Rohit Kumar': {'vacation_days': [], 'is_core': False},
-                'Dr. Abigail Chan': {'vacation_days': [], 'is_core': False}
-            }
-            st.session_state['custom_holidays'] = {}
-    else:
-        st.session_state['team'] = {
-            'Dr. Vijay Raghavan': {'vacation_days': [], 'is_core': True},
-            'Dr. Iltaf Khan': {'vacation_days': [], 'is_core': True},
-            'Dr. Rohit Kumar': {'vacation_days': [], 'is_core': False},
-            'Dr. Abigail Chan': {'vacation_days': [], 'is_core': False}
-        }
-        st.session_state['custom_holidays'] = {}
+    st.session_state['team'] = {
+        'Dr. Vijay Raghavan': {'vacation_days': [], 'is_core': True},
+        'Dr. Iltaf Khan': {'vacation_days': [], 'is_core': True},
+        'Dr. Rohit Kumar': {'vacation_days': [], 'is_core': False},
+        'Dr. Abigail Chan': {'vacation_days': [], 'is_core': False}
+    }
 
-# --- SOURCE OF TRUTH: SCHEDULE LOADING ---
+if 'custom_holidays' not in st.session_state:
+    st.session_state['custom_holidays'] = {}
+
 if 'schedule' not in st.session_state:
-    if os.path.exists(CSV_FILE) and os.path.getsize(CSV_FILE) > 0:
-        try:
-            df_disk = pd.read_csv(CSV_FILE)
-            df_disk["Start Date"] = pd.to_datetime(df_disk["Start Date"]).dt.date
-            df_disk["End Date"] = pd.to_datetime(df_disk["End Date"]).dt.date
-            st.session_state['schedule'] = df_disk
-        except:
-            st.session_state['schedule'] = pd.DataFrame()
-    else:
-        st.session_state['schedule'] = pd.DataFrame()
+    st.session_state['schedule'] = pd.DataFrame()
 
 # Inject print styles to isolate just the calendar container during physical printing
 st.markdown("""
@@ -99,99 +47,122 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# --- BACKUP & RESTORE UTILITIES ---
+def generate_backup_file():
+    """Compiles all settings, dates, and schedule data into a single downloadable JSON package."""
+    schedule_data = []
+    if not st.session_state['schedule'].empty:
+        for _, row in st.session_state['schedule'].iterrows():
+            schedule_data.append({
+                "Start Date": row["Start Date"].isoformat() if isinstance(row["Start Date"], date) else row["Start Date"],
+                "End Date": row["End Date"].isoformat() if isinstance(row["End Date"], date) else row["End Date"],
+                "Time Window": row["Time Window"],
+                "Shift Type": row["Shift Type"],
+                "Assigned Physician": row["Assigned Physician"]
+            })
+            
+    export_data = {'team': {}, 'custom_holidays': {}, 'schedule': schedule_data}
+    
+    for doc, info in st.session_state['team'].items():
+        export_data['team'][doc] = {
+            'vacation_days': [d.isoformat() for d in info['vacation_days']],
+            'is_core': info['is_core']
+        }
+    for k, v in st.session_state['custom_holidays'].items():
+        export_data['custom_holidays'][f"{k[0]:02d}-{k[1]:02d}"] = v
+        
+    return json.dumps(export_data, indent=4)
+
+def process_uploaded_backup(uploaded_file):
+    """Restores the complete application state from a backup file."""
+    try:
+        data = json.load(uploaded_file)
+        
+        team = {}
+        for doc, info in data.get('team', {}).items():
+            v_days = [date.fromisoformat(d) for d in info.get('vacation_days', [])]
+            team[doc] = {'vacation_days': v_days, 'is_core': info.get('is_core', True)}
+        st.session_state['team'] = team
+        
+        hols = {}
+        for k, v in data.get('custom_holidays', {}).items():
+            m, d = map(int, k.split('-'))
+            hols[(m, d)] = v
+        st.session_state['custom_holidays'] = hols
+        
+        sched_list = data.get('schedule', [])
+        if sched_list:
+            df = pd.DataFrame(sched_list)
+            df["Start Date"] = pd.to_datetime(df["Start Date"]).dt.date
+            df["End Date"] = pd.to_datetime(df["End Date"]).dt.date
+            st.session_state['schedule'] = df
+        else:
+            st.session_state['schedule'] = pd.DataFrame()
+            
+        st.success("✅ System successfully restored from backup!")
+    except Exception as e:
+        st.error("Error reading backup file. Please ensure it is a valid schedule JSON.")
+
 # --- SIDEBAR: MANAGEMENT ---
-st.sidebar.header("⚙️ Settings")
+st.sidebar.header("⚙️ Settings & Storage")
 
-# 1. Manage Away Dates (Add and Remove)
+# Backup & Restore UI
 st.sidebar.markdown("---")
-st.sidebar.subheader("🌴 Manage Away Dates")
-st.sidebar.caption("Dates logged here permanently shift weekday call duties to the alternate core physician.")
+st.sidebar.subheader("💾 Cloud Backup Manager")
+st.sidebar.caption("Streamlit cloud servers reset periodically. Download your file to save changes permanently. Upload it here if the schedule clears.")
 
-selected_doc = st.sidebar.selectbox("Select Physician", options=list(st.session_state['team'].keys()))
-
-# ---- SECTION A: ADD DATES ----
-st.sidebar.markdown("**1. Add Dates (Single or Range)**")
-date_range = st.sidebar.date_input(
-    "Select Date(s)", 
-    value=(), 
-    help="Click a date once for a single day. Click a start date and an end date to select a full block."
+st.sidebar.download_button(
+    label="⬇️ Download Master Backup File",
+    data=generate_backup_file(),
+    file_name=f"BBCC_Schedule_Backup_{date.today().strftime('%Y_%m_%d')}.json",
+    mime="application/json"
 )
 
+uploaded_backup = st.sidebar.file_uploader("⬆️ Restore from Backup", type=['json'])
+if uploaded_backup is not None:
+    if st.sidebar.button("Apply Uploaded Backup"):
+        process_uploaded_backup(uploaded_backup)
+        st.rerun()
+
+# 1. Manage Away Dates
+st.sidebar.markdown("---")
+st.sidebar.subheader("🌴 Manage Away Dates")
+selected_doc = st.sidebar.selectbox("Select Physician", options=list(st.session_state['team'].keys()))
+
+date_range = st.sidebar.date_input("Select Date(s)", value=())
 if st.sidebar.button("➕ Log Away Date(s)"):
     if isinstance(date_range, tuple) or isinstance(date_range, list):
-        if len(date_range) == 2:  # A range was selected
+        if len(date_range) == 2:
             start_d, end_d = date_range[0], date_range[1]
             delta = end_d - start_d
-            added_count = 0
             for i in range(delta.days + 1):
                 day = start_d + timedelta(days=i)
                 if day not in st.session_state['team'][selected_doc]['vacation_days']:
                     st.session_state['team'][selected_doc]['vacation_days'].append(day)
-                    added_count += 1
-            save_roster_config() # 💾 INSTANT SAVE TO DISK
-            st.sidebar.success(f"Permanently logged {added_count} days away for {selected_doc}.")
-        elif len(date_range) == 1:  # A single date was selected
+            st.sidebar.success("Block logged. Remember to Download Backup!")
+        elif len(date_range) == 1:
             day = date_range[0]
             if day not in st.session_state['team'][selected_doc]['vacation_days']:
                 st.session_state['team'][selected_doc]['vacation_days'].append(day)
-                save_roster_config() # 💾 INSTANT SAVE TO DISK
-                st.sidebar.success(f"Permanently logged {day.strftime('%m/%d/%Y')} away for {selected_doc}.")
-            else:
-                st.sidebar.warning("This date is already logged.")
-        else:
-            st.sidebar.warning("Please select a date from the calendar.")
+                st.sidebar.success("Date logged. Remember to Download Backup!")
     else:
         if date_range not in st.session_state['team'][selected_doc]['vacation_days']:
             st.session_state['team'][selected_doc]['vacation_days'].append(date_range)
-            save_roster_config() # 💾 INSTANT SAVE TO DISK
-            st.sidebar.success(f"Permanently logged {date_range.strftime('%m/%d/%Y')} away.")
+            st.sidebar.success("Date logged. Remember to Download Backup!")
 
-# ---- SECTION B: REMOVE DATES ----
-st.sidebar.markdown("**2. Reverse / Remove Dates**")
 current_vacations = st.session_state['team'][selected_doc].get('vacation_days', [])
-
 if current_vacations:
     current_vacations.sort()
     dates_to_remove = st.sidebar.multiselect(
-        "Select currently logged dates to delete:", 
+        "Remove logged dates:", 
         options=current_vacations,
         format_func=lambda x: x.strftime('%m/%d/%Y')
     )
-    
     if st.sidebar.button("❌ Remove Selected"):
-        if dates_to_remove:
-            for d in dates_to_remove:
-                st.session_state['team'][selected_doc]['vacation_days'].remove(d)
-            save_roster_config() # 💾 INSTANT SAVE TO DISK
-            st.sidebar.success("Dates successfully removed!")
-            st.rerun()
-        else:
-            st.sidebar.warning("Select dates from the dropdown menu first.")
-else:
-    st.sidebar.caption("No dates currently logged for this physician.")
-
-
-# 2. Holiday Management
-st.sidebar.markdown("---")
-st.sidebar.subheader("🎉 Holiday Management")
-custom_holiday_name = st.sidebar.text_input("Holiday Name")
-custom_holiday_date = st.sidebar.date_input("Holiday Date", date.today(), key="holiday_picker")
-
-if st.sidebar.button("Add Holiday"):
-    if custom_holiday_name:
-        key = (custom_holiday_date.month, custom_holiday_date.day)
-        st.session_state['custom_holidays'][key] = custom_holiday_name
-        save_roster_config() # 💾 INSTANT SAVE TO DISK
-        st.sidebar.success(f"Permanently added: {custom_holiday_name}")
-
-us_holidays = holidays.US(years=[date.today().year, date.today().year + 1])
-def check_is_holiday(dt):
-    return dt in us_holidays or (dt.month, dt.day) in st.session_state['custom_holidays']
-
-def get_holiday_name(dt):
-    if dt in us_holidays:
-        return us_holidays.get(dt)
-    return st.session_state['custom_holidays'].get((dt.month, dt.day), "Holiday")
+        for d in dates_to_remove:
+            st.session_state['team'][selected_doc]['vacation_days'].remove(d)
+        st.sidebar.success("Dates removed. Remember to Download Backup!")
+        st.rerun()
 
 # --- MAIN APP: GENERATE SHIFTS ---
 st.title("📅 On-Call Scheduler")
@@ -201,6 +172,15 @@ with col1:
     start_date = st.date_input("Schedule Start Date (Choose a Friday)", date.today(), key="main_start_date")
 with col2:
     num_weeks = st.number_input("Duration (Weeks)", min_value=1, value=4, key="main_duration")
+
+us_holidays = holidays.US(years=[date.today().year, date.today().year + 1])
+def check_is_holiday(dt):
+    return dt in us_holidays or (dt.month, dt.day) in st.session_state['custom_holidays']
+
+def get_holiday_name(dt):
+    if dt in us_holidays:
+        return us_holidays.get(dt)
+    return st.session_state['custom_holidays'].get((dt.month, dt.day), "Holiday")
 
 if st.button("Generate Master Schedule"):
     core_team = [name for name, data in st.session_state['team'].items() if data.get('is_core', True)]
@@ -214,8 +194,6 @@ if st.button("Generate Master Schedule"):
         
         for week in range(int(num_weeks)):
             fri = current_friday
-            sat = fri + timedelta(days=1)
-            sun = fri + timedelta(days=2)
             mon = fri + timedelta(days=3)
             tue = fri + timedelta(days=4)
             
@@ -238,7 +216,6 @@ if st.button("Generate Master Schedule"):
                 "Assigned Physician": assigned_weekend_doc
             })
             
-            # Smart Failover Logic
             primary_weekday_doc = core_team[(core_idx + 1) % len(core_team)]
             weekday_start = weekend_end_date
             next_friday = fri + timedelta(days=7)
@@ -269,36 +246,18 @@ if st.button("Generate Master Schedule"):
             current_friday = next_friday
 
         st.session_state['schedule'] = pd.DataFrame(schedule_data)
-        st.session_state['schedule'].to_csv(CSV_FILE, index=False)
         st.rerun()
 
 # --- DISPLAY CONFIGURATION ---
 st.markdown("---")
 
 if not st.session_state['schedule'].empty:
-    
-    # 💾 THE ULTIMATE OVERRIDE BUTTON
-    if st.button("💾 LOCK IN & SAVE GRID EDITS", type="primary"):
-        if "grid_editor" in st.session_state and st.session_state["grid_editor"]:
-            grid_changes = st.session_state["grid_editor"].get("edited_rows", {})
-            if grid_changes:
-                for r_idx, v_changes in grid_changes.items():
-                    if "Assigned Physician" in v_changes:
-                        st.session_state['schedule'].at[int(r_idx), "Assigned Physician"] = v_changes["Assigned Physician"]
-                
-                st.session_state['schedule'].to_csv(CSV_FILE, index=False)
-                st.success("Changes permanently saved to database! You can safely switch tabs or print now.")
-                st.rerun()
-            else:
-                st.info("No modifications detected in the table to save.")
-        else:
-            st.info("Click directly into the grid table cells below to change coverage physicians first.")
 
     tab1, tab2 = st.tabs(["📝 Interactive Grid Editor", "📆 Visual Monthly Calendar View"])
     
     with tab1:
         st.subheader("Interactive Schedule Grid")
-        st.caption("Instructions: 1. Click a cell to select a physician dropdown. 2. When finished making overrides, click the big blue 'LOCK IN & SAVE GRID EDITS' button directly above before switching tabs.")
+        st.caption("Instructions: Make your edits in the grid. **When finished, click 'Download Master Backup File' in the sidebar to permanently save your changes.**")
         
         def color_rows(row):
             if "Weekend" in row["Shift Type"]:
@@ -319,75 +278,98 @@ if not st.session_state['schedule'].empty:
             },
             key="grid_editor"
         )
+        
+        # Apply structural edits immediately to memory
+        if "grid_editor" in st.session_state:
+            grid_changes = st.session_state["grid_editor"].get("edited_rows", {})
+            if grid_changes:
+                for r_idx, v_changes in grid_changes.items():
+                    if "Assigned Physician" in v_changes:
+                        st.session_state['schedule'].at[int(r_idx), "Assigned Physician"] = v_changes["Assigned Physician"]
 
     with tab2:
         st.subheader("Monthly On-Call Distribution")
-        
-        st.markdown('<button onclick="window.print()" style="background-color:#2563eb; color:white; border:none; padding:8px 16px; border-radius:4px; font-weight:bold; cursor:pointer; margin-bottom:15px;">🖨️ Print Calendar View</button>', unsafe_allow_html=True)
+        st.caption("🖨️ **To Print:** Press `Ctrl + P` (Windows) or `Cmd + P` (Mac) to open your system print dialog. The document is automatically styled to only print the calendar below.")
         st.markdown('<div class="print-container">', unsafe_allow_html=True)
         
         lookup = {}
+        all_dates = []
         for _, row in st.session_state['schedule'].iterrows():
             d_start = row["Start Date"]
             d_end = row["End Date"]
             curr = d_start
             while curr <= d_end:
                 lookup[curr] = (row["Assigned Physician"], row["Shift Type"])
+                all_dates.append(curr)
                 curr += timedelta(days=1)
                 
-        all_dates = list(lookup.keys())
         if all_dates:
-            min_date = min(all_dates)
-            max_date = max(all_dates)
+            # Calendar Pagination Logic
+            unique_months = sorted(list(set([(d.year, d.month) for d in all_dates])))
             
-            start_month = min_date.replace(day=1)
-            end_month = max_date.replace(day=1)
+            if 'cal_idx' not in st.session_state:
+                st.session_state['cal_idx'] = 0
             
-            current_month = start_month
-            while current_month <= end_month:
-                st.write(f"### 🗓️ {current_month.strftime('%B %Y')}")
-                
-                cal = calendar.Calendar(firstweekday=6)
-                month_days = cal.monthdatescalendar(current_month.year, current_month.month)
-                
-                html = "<table style='width:100%; border-collapse:collapse; table-layout: fixed; margin-bottom: 25px;'>"
-                html += "<tr style='background-color:#f1f3f5; text-align:center; font-weight:bold;'>"
-                for day_name in ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]:
-                    html += f"<th style='padding:8px; border:1px solid #dee2e6;'>{day_name}</th>"
-                html += "</tr>"
-                
-                for week_days in month_days:
-                    html += "<tr style='height:90px; vertical-align:top;'>"
-                    for d in week_days:
-                        if d.month != current_month.month:
-                            html += "<td style='border:1px solid #dee2e6; background-color:#fafafa; color:#adb5bd; padding:6px;'></td>"
-                        else:
-                            bg = "#ffffff"
-                            content = ""
-                            
-                            if d in lookup:
-                                doc, stype = lookup[d]
-                                content = f"<div style='font-weight:600; font-size:13px; color:#1e293b; margin-top:4px;'>{doc}</div>"
-                                if "Weekend" in stype:
-                                    bg = "#edf2f7"
-                                    content += "<div style='font-size:10px; color:#64748b;'>Weekend</div>"
-                                else:
-                                    content += "<div style='font-size:10px; color:#94a3b8;'>Weekday</div>"
-                                    
-                            if check_is_holiday(d):
-                                bg = "#ffe3e3"
-                                content += f"<div style='font-size:10px; color:#dc2626; font-weight:bold;'>{get_holiday_name(d)}</div>"
+            # Boundary checks
+            if st.session_state['cal_idx'] >= len(unique_months):
+                st.session_state['cal_idx'] = len(unique_months) - 1
+            if st.session_state['cal_idx'] < 0:
+                st.session_state['cal_idx'] = 0
+
+            # Pagination Controls
+            nav_col1, nav_col2, nav_col3 = st.columns([1, 2, 1])
+            with nav_col1:
+                if st.button("⬅️ Previous Month") and st.session_state['cal_idx'] > 0:
+                    st.session_state['cal_idx'] -= 1
+                    st.rerun()
+            with nav_col3:
+                if st.button("Next Month ➡️") and st.session_state['cal_idx'] < len(unique_months) - 1:
+                    st.session_state['cal_idx'] += 1
+                    st.rerun()
+
+            # Render specifically selected month
+            curr_year, curr_month = unique_months[st.session_state['cal_idx']]
+            target_date = date(curr_year, curr_month, 1)
+            
+            st.write(f"### 🗓️ {target_date.strftime('%B %Y')}")
+            
+            cal = calendar.Calendar(firstweekday=6)
+            month_days = cal.monthdatescalendar(curr_year, curr_month)
+            
+            html = "<table style='width:100%; border-collapse:collapse; table-layout: fixed; margin-bottom: 25px;'>"
+            html += "<tr style='background-color:#f1f3f5; text-align:center; font-weight:bold;'>"
+            for day_name in ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]:
+                html += f"<th style='padding:8px; border:1px solid #dee2e6;'>{day_name}</th>"
+            html += "</tr>"
+            
+            for week_days in month_days:
+                html += "<tr style='height:90px; vertical-align:top;'>"
+                for d in week_days:
+                    if d.month != curr_month:
+                        html += "<td style='border:1px solid #dee2e6; background-color:#fafafa; color:#adb5bd; padding:6px;'></td>"
+                    else:
+                        bg = "#ffffff"
+                        content = ""
+                        
+                        if d in lookup:
+                            doc, stype = lookup[d]
+                            content = f"<div style='font-weight:600; font-size:13px; color:#1e293b; margin-top:4px;'>{doc}</div>"
+                            if "Weekend" in stype:
+                                bg = "#edf2f7"
+                                content += "<div style='font-size:10px; color:#64748b;'>Weekend</div>"
+                            else:
+                                content += "<div style='font-size:10px; color:#94a3b8;'>Weekday</div>"
                                 
-                            html += f"<td style='border:1px solid #dee2e6; background-color:{bg}; padding:6px;'>"
-                            html += f"<span style='font-size:12px; font-weight:bold; color:#475569;'>{d.day}</span>"
-                            html += content
-                            html += "</td>"
-                    html += "</tr>"
-                html += "</table>"
-                st.markdown(html, unsafe_allow_html=True)
-                
-                if current_month.month == 12:
-                    current_month = current_month.replace(year=current_month.year + 1, month=1)
-                else:
-                    current_month = current_month.replace(month=current_month.month + 1)
+                        if check_is_holiday(d):
+                            bg = "#ffe3e3"
+                            content += f"<div style='font-size:10px; color:#dc2626; font-weight:bold;'>{get_holiday_name(d)}</div>"
+                            
+                        html += f"<td style='border:1px solid #dee2e6; background-color:{bg}; padding:6px;'>"
+                        html += f"<span style='font-size:12px; font-weight:bold; color:#475569;'>{d.day}</span>"
+                        html += content
+                        html += "</td>"
+                html += "</tr>"
+            html += "</table>"
+            st.markdown(html, unsafe_allow_html=True)
+
         st.markdown('</div>', unsafe_allow_html=True)

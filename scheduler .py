@@ -12,55 +12,56 @@ DATA_FILE = "BBCC_master_data.json"
 
 # --- SECURE GITHUB DATABASE CONNECTION ---
 def load_data_from_github():
-    """Pulls the live master schedule directly from the GitHub repository."""
+    """Pulls the live master data directly from the GitHub repository branch."""
     try:
         g = Github(st.secrets["GITHUB_TOKEN"])
         repo = g.get_repo(st.secrets["GITHUB_REPO"])
         file_content = repo.get_contents(DATA_FILE)
         data = json.loads(file_content.decoded_content.decode("utf-8"))
-        return data, file_content.sha
+        return data
     except Exception as e:
-        # Returns None if the file doesn't exist yet
-        return None, None
+        # File doesn't exist yet or repository is fresh
+        return None
 
 def save_data_to_github(data_dict):
-    """Silently commits updates directly to the GitHub repository."""
+    """Forcefully writes and commits updates directly to the GitHub repository."""
     try:
         g = Github(st.secrets["GITHUB_TOKEN"])
         repo = g.get_repo(st.secrets["GITHUB_REPO"])
         content_str = json.dumps(data_dict, indent=4)
         
-        # Check if file exists to either update or create
+        # Real-time fingerprint fetching to prevent write blocks
         try:
             file_content = repo.get_contents(DATA_FILE)
-            repo.update_file(DATA_FILE, "Auto-save schedule update", content_str, file_content.sha)
-        except:
-            repo.create_file(DATA_FILE, "Initial schedule creation", content_str)
+            repo.update_file(DATA_FILE, "Update on-call data roster", content_str, file_content.sha)
+        except Exception:
+            # Create the file cleanly if it is missing from the repository root
+            repo.create_file(DATA_FILE, "Initialize on-call data roster", content_str)
         return True
     except Exception as e:
-        st.error(f"Failed to connect to GitHub. Please check your Streamlit Secrets. Error: {e}")
+        st.error(f"Cloud write blocked. Ensure your Streamlit Secrets match your GitHub configuration. Error: {e}")
         return False
 
-# --- LOAD SYSTEM STATE ---
+# --- LOAD SYSTEM STATE ONCE ---
 if 'system_loaded' not in st.session_state:
-    db_data, file_sha = load_data_from_github()
+    db_data = load_data_from_github()
     
     if db_data:
-        # Load Team
+        # Re-link Team configuration arrays
         team = {}
         for doc, info in db_data.get('team', {}).items():
             v_days = [date.fromisoformat(d) for d in info.get('vacation_days', [])]
             team[doc] = {'vacation_days': v_days, 'is_core': info.get('is_core', True)}
         st.session_state['team'] = team
         
-        # Load Holidays
+        # Re-link Custom Holidays
         hols = {}
         for k, v in db_data.get('custom_holidays', {}).items():
             m, d = map(int, k.split('-'))
             hols[(m, d)] = v
         st.session_state['custom_holidays'] = hols
         
-        # Load Schedule
+        # Re-link Master On-Call Schedule Matrix
         sched_list = db_data.get('schedule', [])
         if sched_list:
             df = pd.DataFrame(sched_list)
@@ -71,12 +72,12 @@ if 'system_loaded' not in st.session_state:
             st.session_state['schedule'] = pd.DataFrame()
             
     else:
-        # Fresh Setup Default Roster
+        # Default fallback structure initialization
         st.session_state['team'] = {
             'Dr. Vijay Raghavan': {'vacation_days': [], 'is_core': True},
-            'Dr. Iltaf Khan': {'vacation_days': [], 'is_core': True},
-            'Dr. Rohit Kumar': {'vacation_days': [], 'is_core': False},
-            'Dr. Abigail Chan': {'vacation_days': [], 'is_core': False}
+            'Dr. CoreTwo': {'vacation_days': [], 'is_core': True},
+            'Dr. CoverageAlpha': {'vacation_days': [], 'is_core': False},
+            'Dr. CoverageBeta': {'vacation_days': [], 'is_core': False}
         }
         st.session_state['custom_holidays'] = {}
         st.session_state['schedule'] = pd.DataFrame()
@@ -85,8 +86,8 @@ if 'system_loaded' not in st.session_state:
     st.session_state['cal_month'] = date.today().month
     st.session_state['cal_year'] = date.today().year
 
-# Helper to bundle and save current state
 def trigger_cloud_save():
+    """Packages the memory lists cleanly and fires them to the server."""
     schedule_data = []
     if not st.session_state['schedule'].empty:
         for _, row in st.session_state['schedule'].iterrows():
@@ -109,8 +110,7 @@ def trigger_cloud_save():
         
     return save_data_to_github(export_data)
 
-
-# --- PRINT CSS ---
+# --- LAYOUT DESIGN STYLES ---
 st.markdown("""
 <style>
     @media print {
@@ -141,16 +141,16 @@ if st.sidebar.button("➕ Log Away Date(s)"):
                 day = start_d + timedelta(days=i)
                 if day not in st.session_state['team'][selected_doc]['vacation_days']:
                     st.session_state['team'][selected_doc]['vacation_days'].append(day)
-            if trigger_cloud_save(): st.sidebar.success("Block successfully synced to cloud!")
+            if trigger_cloud_save(): st.sidebar.success("Away window locked online!")
         elif len(date_range) == 1:
             day = date_range[0]
             if day not in st.session_state['team'][selected_doc]['vacation_days']:
                 st.session_state['team'][selected_doc]['vacation_days'].append(day)
-                if trigger_cloud_save(): st.sidebar.success("Date successfully synced to cloud!")
+                if trigger_cloud_save(): st.sidebar.success("Away date locked online!")
     else:
         if date_range not in st.session_state['team'][selected_doc]['vacation_days']:
             st.session_state['team'][selected_doc]['vacation_days'].append(date_range)
-            if trigger_cloud_save(): st.sidebar.success("Date successfully synced to cloud!")
+            if trigger_cloud_save(): st.sidebar.success("Away date locked online!")
 
 current_vacations = st.session_state['team'][selected_doc].get('vacation_days', [])
 if current_vacations:
@@ -164,8 +164,8 @@ if current_vacations:
         for d in dates_to_remove:
             st.session_state['team'][selected_doc]['vacation_days'].remove(d)
         if trigger_cloud_save(): 
-            st.sidebar.success("Dates removed from cloud.")
-            st.rerun()
+            st.sidebar.success("Dates deleted from online system.")
+            st.sidebar.rerun()
 
 # --- MAIN APP: GENERATE SHIFTS ---
 st.title("📅 On-Call Scheduler")
@@ -250,7 +250,7 @@ if st.button("Generate Master Schedule"):
         if trigger_cloud_save():
             st.rerun()
 
-# --- DISPLAY CONFIGURATION ---
+# --- DISPLAY LAYOUT TABS ---
 st.markdown("---")
 
 if not st.session_state['schedule'].empty:
@@ -259,9 +259,9 @@ if not st.session_state['schedule'].empty:
     
     with tab1:
         st.subheader("Interactive Schedule Grid")
-        st.caption("Instructions: Make your edits in the grid. **When finished, click the blue LOCK button below.**")
+        st.caption("Instructions: Make your adjustments inside the spreadsheet columns. **When finished, click the LOCK button below to sync modifications live.**")
         
-        def color_rows(row):
+        def color_rows(row): 
             if "Weekend" in row["Shift Type"]: return ['background-color: #f7f9fc; font-weight: bold'] * len(row)
             return [''] * len(row)
 
@@ -283,12 +283,12 @@ if not st.session_state['schedule'].empty:
         if st.button("💾 LOCK IN & SYNC GRID EDITS", type="primary"):
             st.session_state['schedule']["Assigned Physician"] = edited_df["Assigned Physician"]
             if trigger_cloud_save():
-                st.success("Changes Locked and Synced to GitHub Database! Physicians will now see this live.")
+                st.success("Changes Locked and Synced Live to Database!")
                 st.rerun()
 
     with tab2:
         st.subheader("Monthly On-Call Distribution")
-        st.caption("🖨️ **To Print:** Press `Ctrl + P` (Windows) or `Cmd + P` (Mac). The layout will automatically print horizontally at 75% scale.")
+        st.caption("🖨️ **To Print:** Press `Ctrl + P` (Windows) or `Cmd + P` (Mac). Layout scales landscape automatically.")
         
         nav_col1, nav_col2, nav_col3 = st.columns([1, 2, 1])
         with nav_col1:

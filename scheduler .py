@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import date, timedelta, datetime
+from datetime import date, timedelta
 import holidays  
 import calendar
 import json
@@ -23,25 +23,34 @@ if 'custom_holidays' not in st.session_state:
 if 'schedule' not in st.session_state:
     st.session_state['schedule'] = pd.DataFrame()
 
-# Inject print styles to isolate just the calendar container during physical printing
+# Infinite Calendar Setup
+if 'cal_month' not in st.session_state:
+    st.session_state['cal_month'] = date.today().month
+    st.session_state['cal_year'] = date.today().year
+
+# --- FIXED PRINT CSS ---
+# Instead of hiding the whole body, we precisely target only Streamlit's UI menus
 st.markdown("""
 <style>
     @media print {
-        body *, .sidebar, button, [data-testid="stSidebar"], [data-testid="stHeader"], .stTabs [role="tablist"] {
-            visibility: hidden !important;
-            height: 0 !important;
-            margin: 0 !important;
+        /* Hide sidebars, top headers, tab navigation, and buttons */
+        [data-testid="stSidebar"], 
+        header[data-testid="stHeader"], 
+        .stTabs [role="tablist"],
+        [data-testid="stToolbar"],
+        button {
+            display: none !important;
+        }
+        
+        /* Force the main container to take up the full printed page */
+        .main .block-container {
+            max-width: 100% !important;
             padding: 0 !important;
+            margin: 0 !important;
         }
-        .print-container, .print-container * {
-            visibility: visible !important;
-        }
-        .print-container {
-            position: absolute !important;
-            left: 0 !important;
-            top: 0 !important;
-            width: 100% !important;
-        }
+        
+        /* Ensure table rows do not break across physical pages */
+        tr { page-break-inside: avoid !important; }
         table { page-break-inside: avoid !important; }
     }
 </style>
@@ -49,7 +58,6 @@ st.markdown("""
 
 # --- BACKUP & RESTORE UTILITIES ---
 def generate_backup_file():
-    """Compiles all settings, dates, and schedule data into a single downloadable JSON package."""
     schedule_data = []
     if not st.session_state['schedule'].empty:
         for _, row in st.session_state['schedule'].iterrows():
@@ -74,7 +82,6 @@ def generate_backup_file():
     return json.dumps(export_data, indent=4)
 
 def process_uploaded_backup(uploaded_file):
-    """Restores the complete application state from a backup file."""
     try:
         data = json.load(uploaded_file)
         
@@ -124,7 +131,7 @@ if uploaded_backup is not None:
         process_uploaded_backup(uploaded_backup)
         st.rerun()
 
-# 1. Manage Away Dates
+# Manage Away Dates
 st.sidebar.markdown("---")
 st.sidebar.subheader("🌴 Manage Away Dates")
 selected_doc = st.sidebar.selectbox("Select Physician", options=list(st.session_state['team'].keys()))
@@ -183,6 +190,10 @@ def get_holiday_name(dt):
     return st.session_state['custom_holidays'].get((dt.month, dt.day), "Holiday")
 
 if st.button("Generate Master Schedule"):
+    # Set calendar to snap to the month of the generated schedule automatically
+    st.session_state['cal_month'] = start_date.month
+    st.session_state['cal_year'] = start_date.year
+
     core_team = [name for name, data in st.session_state['team'].items() if data.get('is_core', True)]
     
     if len(core_team) < 2:
@@ -290,86 +301,81 @@ if not st.session_state['schedule'].empty:
     with tab2:
         st.subheader("Monthly On-Call Distribution")
         st.caption("🖨️ **To Print:** Press `Ctrl + P` (Windows) or `Cmd + P` (Mac) to open your system print dialog. The document is automatically styled to only print the calendar below.")
+        
+        # --- FIXED CALENDAR PAGINATION ---
+        nav_col1, nav_col2, nav_col3 = st.columns([1, 2, 1])
+        with nav_col1:
+            if st.button("⬅️ Previous Month"):
+                if st.session_state['cal_month'] == 1:
+                    st.session_state['cal_month'] = 12
+                    st.session_state['cal_year'] -= 1
+                else:
+                    st.session_state['cal_month'] -= 1
+                st.rerun()
+        with nav_col3:
+            if st.button("Next Month ➡️"):
+                if st.session_state['cal_month'] == 12:
+                    st.session_state['cal_month'] = 1
+                    st.session_state['cal_year'] += 1
+                else:
+                    st.session_state['cal_month'] += 1
+                st.rerun()
+
         st.markdown('<div class="print-container">', unsafe_allow_html=True)
         
         lookup = {}
-        all_dates = []
         for _, row in st.session_state['schedule'].iterrows():
             d_start = row["Start Date"]
             d_end = row["End Date"]
             curr = d_start
             while curr <= d_end:
                 lookup[curr] = (row["Assigned Physician"], row["Shift Type"])
-                all_dates.append(curr)
                 curr += timedelta(days=1)
                 
-        if all_dates:
-            # Calendar Pagination Logic
-            unique_months = sorted(list(set([(d.year, d.month) for d in all_dates])))
-            
-            if 'cal_idx' not in st.session_state:
-                st.session_state['cal_idx'] = 0
-            
-            # Boundary checks
-            if st.session_state['cal_idx'] >= len(unique_months):
-                st.session_state['cal_idx'] = len(unique_months) - 1
-            if st.session_state['cal_idx'] < 0:
-                st.session_state['cal_idx'] = 0
-
-            # Pagination Controls
-            nav_col1, nav_col2, nav_col3 = st.columns([1, 2, 1])
-            with nav_col1:
-                if st.button("⬅️ Previous Month") and st.session_state['cal_idx'] > 0:
-                    st.session_state['cal_idx'] -= 1
-                    st.rerun()
-            with nav_col3:
-                if st.button("Next Month ➡️") and st.session_state['cal_idx'] < len(unique_months) - 1:
-                    st.session_state['cal_idx'] += 1
-                    st.rerun()
-
-            # Render specifically selected month
-            curr_year, curr_month = unique_months[st.session_state['cal_idx']]
-            target_date = date(curr_year, curr_month, 1)
-            
-            st.write(f"### 🗓️ {target_date.strftime('%B %Y')}")
-            
-            cal = calendar.Calendar(firstweekday=6)
-            month_days = cal.monthdatescalendar(curr_year, curr_month)
-            
-            html = "<table style='width:100%; border-collapse:collapse; table-layout: fixed; margin-bottom: 25px;'>"
-            html += "<tr style='background-color:#f1f3f5; text-align:center; font-weight:bold;'>"
-            for day_name in ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]:
-                html += f"<th style='padding:8px; border:1px solid #dee2e6;'>{day_name}</th>"
-            html += "</tr>"
-            
-            for week_days in month_days:
-                html += "<tr style='height:90px; vertical-align:top;'>"
-                for d in week_days:
-                    if d.month != curr_month:
-                        html += "<td style='border:1px solid #dee2e6; background-color:#fafafa; color:#adb5bd; padding:6px;'></td>"
-                    else:
-                        bg = "#ffffff"
-                        content = ""
-                        
-                        if d in lookup:
-                            doc, stype = lookup[d]
-                            content = f"<div style='font-weight:600; font-size:13px; color:#1e293b; margin-top:4px;'>{doc}</div>"
-                            if "Weekend" in stype:
-                                bg = "#edf2f7"
-                                content += "<div style='font-size:10px; color:#64748b;'>Weekend</div>"
-                            else:
-                                content += "<div style='font-size:10px; color:#94a3b8;'>Weekday</div>"
-                                
-                        if check_is_holiday(d):
-                            bg = "#ffe3e3"
-                            content += f"<div style='font-size:10px; color:#dc2626; font-weight:bold;'>{get_holiday_name(d)}</div>"
+        # Render the specific selected month
+        curr_year = st.session_state['cal_year']
+        curr_month = st.session_state['cal_month']
+        target_date = date(curr_year, curr_month, 1)
+        
+        st.write(f"### 🗓️ {target_date.strftime('%B %Y')}")
+        
+        cal = calendar.Calendar(firstweekday=6)
+        month_days = cal.monthdatescalendar(curr_year, curr_month)
+        
+        html = "<table style='width:100%; border-collapse:collapse; table-layout: fixed; margin-bottom: 25px;'>"
+        html += "<tr style='background-color:#f1f3f5; text-align:center; font-weight:bold;'>"
+        for day_name in ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]:
+            html += f"<th style='padding:8px; border:1px solid #dee2e6;'>{day_name}</th>"
+        html += "</tr>"
+        
+        for week_days in month_days:
+            html += "<tr style='height:90px; vertical-align:top;'>"
+            for d in week_days:
+                if d.month != curr_month:
+                    html += "<td style='border:1px solid #dee2e6; background-color:#fafafa; color:#adb5bd; padding:6px;'></td>"
+                else:
+                    bg = "#ffffff"
+                    content = ""
+                    
+                    if d in lookup:
+                        doc, stype = lookup[d]
+                        content = f"<div style='font-weight:600; font-size:13px; color:#1e293b; margin-top:4px;'>{doc}</div>"
+                        if "Weekend" in stype:
+                            bg = "#edf2f7"
+                            content += "<div style='font-size:10px; color:#64748b;'>Weekend</div>"
+                        else:
+                            content += "<div style='font-size:10px; color:#94a3b8;'>Weekday</div>"
                             
-                        html += f"<td style='border:1px solid #dee2e6; background-color:{bg}; padding:6px;'>"
-                        html += f"<span style='font-size:12px; font-weight:bold; color:#475569;'>{d.day}</span>"
-                        html += content
-                        html += "</td>"
-                html += "</tr>"
-            html += "</table>"
-            st.markdown(html, unsafe_allow_html=True)
+                    if check_is_holiday(d):
+                        bg = "#ffe3e3"
+                        content += f"<div style='font-size:10px; color:#dc2626; font-weight:bold;'>{get_holiday_name(d)}</div>"
+                        
+                    html += f"<td style='border:1px solid #dee2e6; background-color:{bg}; padding:6px;'>"
+                    html += f"<span style='font-size:12px; font-weight:bold; color:#475569;'>{d.day}</span>"
+                    html += content
+                    html += "</td>"
+            html += "</tr>"
+        html += "</table>"
+        st.markdown(html, unsafe_allow_html=True)
 
         st.markdown('</div>', unsafe_allow_html=True)

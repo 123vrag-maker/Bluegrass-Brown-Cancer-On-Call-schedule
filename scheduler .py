@@ -41,9 +41,9 @@ def save_data_to_github(data_dict):
 if 'system_loaded' not in st.session_state:
     st.session_state['team'] = {
         'Dr. Vijay Raghavan': {'is_core': True},
-        'Dr. Itaf Khan': {'is_core': True},
-        'Dr. Rohit Kumar': {'is_core': False},
-        'Dr. Abigail Chan': {'is_core': False}
+        'Dr. CoreTwo': {'is_core': True},
+        'Dr. CoverageAlpha': {'is_core': False},
+        'Dr. CoverageBeta': {'is_core': False}
     }
     st.session_state['custom_holidays'] = {}
     st.session_state['schedule'] = pd.DataFrame()
@@ -157,17 +157,17 @@ if st.button("Generate Master Schedule", type="secondary"):
             elif check_is_holiday(fri):
                 weekend_label = f"Long Weekend ({get_holiday_name(fri)})"
 
-            assigned_weekend_doc = core_physicians_only[core_idx % len(core_physicians_only)]
+            # FIXED: Assign the SAME physician to the entire 7-day stretch
+            assigned_doc = core_physicians_only[core_idx % len(core_physicians_only)]
             
             schedule_data.append({
                 "Start Date": fri,
                 "End Date": weekend_end_date - timedelta(days=1),
                 "Time Window": f"{fri.strftime('%m/%d')} (12 PM) to {weekend_end_date.strftime('%m/%d')} (8 AM)",
                 "Shift Type": f"Weekend / {weekend_label}",
-                "Assigned Physician": assigned_weekend_doc
+                "Assigned Physician": assigned_doc
             })
             
-            primary_weekday_doc = core_physicians_only[(core_idx + 1) % len(core_physicians_only)]
             weekday_start = weekend_end_date
             next_friday = fri + timedelta(days=7)
             
@@ -176,10 +176,10 @@ if st.button("Generate Master Schedule", type="secondary"):
                 "End Date": next_friday - timedelta(days=1),
                 "Time Window": f"{weekday_start.strftime('%m/%d')} (8 AM) to {next_friday.strftime('%m/%d')} (12 PM)",
                 "Shift Type": "Weekday Core Block",
-                "Assigned Physician": primary_weekday_doc
+                "Assigned Physician": assigned_doc
             })
             
-            core_idx += 1
+            core_idx += 1 # Move to the other physician for the next week
             current_friday = next_friday
 
         st.session_state['schedule'] = pd.DataFrame(schedule_data)

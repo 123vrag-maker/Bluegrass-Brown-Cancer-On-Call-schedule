@@ -69,7 +69,7 @@
             "End Date": "2026-06-18",
             "Time Window": "06/15 (8 AM) to 06/19 (12 PM)",
             "Shift Type": "Weekday Core Block",
-            "Assigned Physician": "Dr. Itaf Khan"
+            "Assigned Physician": "Dr. Vijay Raghavan"
         },
         {
             "Start Date": "2026-06-19",
@@ -83,7 +83,7 @@
             "End Date": "2026-06-25",
             "Time Window": "06/22 (8 AM) to 06/26 (12 PM)",
             "Shift Type": "Weekday Core Block",
-            "Assigned Physician": "Dr. Vijay Raghavan"
+            "Assigned Physician": "Dr. Itaf Khan"
         },
         {
             "Start Date": "2026-06-26",
@@ -104,14 +104,14 @@
             "End Date": "2026-07-05",
             "Time Window": "07/03 (12 PM) to 07/06 (8 AM)",
             "Shift Type": "Weekend / Long Weekend (Independence Day (observed))",
-            "Assigned Physician": "Dr. Vijay Raghavan"
+            "Assigned Physician": "Dr. Itaf Khan"
         },
         {
             "Start Date": "2026-07-06",
             "End Date": "2026-07-09",
             "Time Window": "07/06 (8 AM) to 07/10 (12 PM)",
             "Shift Type": "Weekday Core Block",
-            "Assigned Physician": "Dr. Vijay Raghavan"
+            "Assigned Physician": "Dr. Itaf Khan"
         },
         {
             "Start Date": "2026-07-10",

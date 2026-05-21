@@ -22,27 +22,23 @@ def load_data_from_github():
         return None
 
 def save_data_to_github(data_dict):
-    """Forcefully writes updates to GitHub by dynamically pulling the real-time SHA fingerprint."""
     try:
         g = Github(st.secrets["GITHUB_TOKEN"])
         repo = g.get_repo(st.secrets["GITHUB_REPO"])
         content_str = json.dumps(data_dict, indent=4)
         
-        # CRITICAL FIX: Fetch the absolute latest file state right at this millisecond to get the correct SHA
         try:
             file_content = repo.get_contents(DATA_FILE)
             repo.update_file(DATA_FILE, "Update on-call data roster", content_str, file_content.sha)
         except Exception:
-            # If the file does not exist at all in the repository root, create it fresh
             repo.create_file(DATA_FILE, "Initialize on-call data roster", content_str)
         return True
     except Exception as e:
-        st.error(f"Cloud write blocked. Ensure your Streamlit Secrets match your GitHub configuration. Error: {e}")
+        st.error(f"Cloud write blocked. Error: {e}")
         return False
 
 # --- LOAD SYSTEM STATE ONCE ---
 if 'system_loaded' not in st.session_state:
-    # Strict allocation: Initialize independent memory banks for every doctor
     st.session_state['team'] = {
         'Dr. Vijay Raghavan': {'vacation_days': [], 'is_core': True},
         'Dr. Iltaf Khan': {'vacation_days': [], 'is_core': True},
@@ -54,21 +50,18 @@ if 'system_loaded' not in st.session_state:
 
     db_data = load_data_from_github()
     if db_data:
-        # CRITICAL FIX: Explicitly assign dates to their unique owners without bleeding over
+        # Re-link logged away dates securely back to their specific owners
         for doc in st.session_state['team'].keys():
             if doc in db_data.get('team', {}):
                 raw_days = db_data['team'][doc].get('vacation_days', [])
-                # Re-parse text files back into standalone calendar objects
                 st.session_state['team'][doc]['vacation_days'] = [date.fromisoformat(d) for d in raw_days]
         
-        # Load holidays
         hols = {}
         for k, v in db_data.get('custom_holidays', {}).items():
             m, d = map(int, k.split('-'))
             hols[(m, d)] = v
         st.session_state['custom_holidays'] = hols
         
-        # Load schedule matrix
         sched_list = db_data.get('schedule', [])
         if sched_list:
             df = pd.DataFrame(sched_list)
@@ -126,7 +119,14 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("🌴 Manage Away Dates")
 selected_doc = st.sidebar.selectbox("Select Core Physician", options=core_physicians_only)
 
-date_range = st.sidebar.date_input("Select Date(s)", value=(), help="Select a single date, or click a start and end date to log a full block.")
+# CRITICAL FIX: The key parameter is dynamically tied to the doctor's name, clearing visual bleeding across swaps
+date_range = st.sidebar.date_input(
+    "Select Date(s)", 
+    value=(), 
+    key=f"away_calendar_{selected_doc}",
+    help="Select a single date, or click a start and end date to log a full block."
+)
+
 if st.sidebar.button("➕ Log Away Date(s)"):
     if isinstance(date_range, tuple) or isinstance(date_range, list):
         if len(date_range) == 2:
@@ -153,19 +153,21 @@ if st.sidebar.button("➕ Log Away Date(s)"):
                 st.sidebar.success(f"Away date successfully saved for {selected_doc}!")
                 st.rerun()
 
+# Display current away list strictly for the selected doctor
 current_vacations = st.session_state['team'][selected_doc].get('vacation_days', [])
 if current_vacations:
     current_vacations.sort()
     dates_to_remove = st.sidebar.multiselect(
-        "Remove logged dates:", 
+        f"Remove logged dates for {selected_doc.split(' ')[-1]}:", 
         options=current_vacations,
-        format_func=lambda x: x.strftime('%m/%d/%Y')
+        format_func=lambda x: x.strftime('%m/%d/%Y'),
+        key=f"remove_select_{selected_doc}"
     )
     if st.sidebar.button("❌ Remove Selected"):
         for d in dates_to_remove:
             st.session_state['team'][selected_doc]['vacation_days'].remove(d)
         if trigger_cloud_save(): 
-            st.sidebar.success("Dates deleted cleanly from online database.")
+            st.sidebar.success("Dates deleted cleanly.")
             st.rerun()
 
 # --- MAIN APP: GENERATE SHIFTS ---
@@ -299,7 +301,7 @@ if not st.session_state['schedule'].empty:
         if st.button("💾 LOCK IN & SYNC GRID EDITS", type="primary"):
             st.session_state['schedule']["Assigned Physician"] = edited_df["Assigned Physician"]
             if trigger_cloud_save():
-                st.success("Changes Locked and Synced Live to Database! Physicians will now see this updated information.")
+                st.success("Changes Locked and Synced Live to Database!")
                 st.rerun()
 
     with tab2:

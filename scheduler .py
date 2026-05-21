@@ -29,9 +29,9 @@ def save_data_to_github(data_dict):
         
         try:
             file_content = repo.get_contents(DATA_FILE)
-            repo.update_file(DATA_FILE, "Update on-call data roster", content_str, file_content.sha)
+            repo.update_file(DATA_FILE, "Update on-call schedule", content_str, file_content.sha)
         except Exception:
-            repo.create_file(DATA_FILE, "Initialize on-call data roster", content_str)
+            repo.create_file(DATA_FILE, "Initialize on-call schedule", content_str)
         return True
     except Exception as e:
         st.error(f"Cloud write blocked. Error: {e}")
@@ -40,22 +40,16 @@ def save_data_to_github(data_dict):
 # --- LOAD SYSTEM STATE ONCE ---
 if 'system_loaded' not in st.session_state:
     st.session_state['team'] = {
-        'Dr. Vijay Raghavan': {'vacation_days': [], 'is_core': True},
-        'Dr. Iltaf Khan': {'vacation_days': [], 'is_core': True},
-        'Dr. Rohit Kumar': {'vacation_days': [], 'is_core': False},
-        'Dr. Abigail Chan': {'vacation_days': [], 'is_core': False}
+        'Dr. Vijay Raghavan': {'is_core': True},
+        'Dr. Itaf Khan': {'is_core': True},
+        'Dr. Rohit Kumar': {'is_core': False},
+        'Dr. Abigail Chan': {'is_core': False}
     }
     st.session_state['custom_holidays'] = {}
     st.session_state['schedule'] = pd.DataFrame()
 
     db_data = load_data_from_github()
     if db_data:
-        # Re-link logged away dates securely back to their specific owners
-        for doc in st.session_state['team'].keys():
-            if doc in db_data.get('team', {}):
-                raw_days = db_data['team'][doc].get('vacation_days', [])
-                st.session_state['team'][doc]['vacation_days'] = [date.fromisoformat(d) for d in raw_days]
-        
         hols = {}
         for k, v in db_data.get('custom_holidays', {}).items():
             m, d = map(int, k.split('-'))
@@ -85,12 +79,7 @@ def trigger_cloud_save():
                 "Assigned Physician": row["Assigned Physician"]
             })
             
-    export_data = {'team': {}, 'custom_holidays': {}, 'schedule': schedule_data}
-    for doc, info in st.session_state['team'].items():
-        export_data['team'][doc] = {
-            'vacation_days': [d.isoformat() for d in info['vacation_days']],
-            'is_core': info['is_core']
-        }
+    export_data = {'team': st.session_state['team'], 'custom_holidays': {}, 'schedule': schedule_data}
     for k, v in st.session_state['custom_holidays'].items():
         export_data['custom_holidays'][f"{k[0]:02d}-{k[1]:02d}"] = v
         
@@ -113,62 +102,18 @@ st.markdown("""
 # --- SIDEBAR: MANAGEMENT ---
 st.sidebar.header("⚙️ Roster Settings")
 
-core_physicians_only = [name for name, specs in st.session_state['team'].items() if specs['is_core']]
-
 st.sidebar.markdown("---")
-st.sidebar.subheader("🌴 Manage Away Dates")
-selected_doc = st.sidebar.selectbox("Select Core Physician", options=core_physicians_only)
+st.sidebar.subheader("🎉 Add Custom Holidays")
+st.sidebar.caption("These will highlight red on the calendar.")
+custom_holiday_name = st.sidebar.text_input("Holiday Name")
+custom_holiday_date = st.sidebar.date_input("Holiday Date", date.today(), key="holiday_picker")
 
-# CRITICAL FIX: The key parameter is dynamically tied to the doctor's name, clearing visual bleeding across swaps
-date_range = st.sidebar.date_input(
-    "Select Date(s)", 
-    value=(), 
-    key=f"away_calendar_{selected_doc}",
-    help="Select a single date, or click a start and end date to log a full block."
-)
-
-if st.sidebar.button("➕ Log Away Date(s)"):
-    if isinstance(date_range, tuple) or isinstance(date_range, list):
-        if len(date_range) == 2:
-            start_d, end_d = date_range[0], date_range[1]
-            delta = end_d - start_d
-            for i in range(delta.days + 1):
-                day = start_d + timedelta(days=i)
-                if day not in st.session_state['team'][selected_doc]['vacation_days']:
-                    st.session_state['team'][selected_doc]['vacation_days'].append(day)
-            if trigger_cloud_save(): 
-                st.sidebar.success(f"Away block successfully saved for {selected_doc}!")
-                st.rerun()
-        elif len(date_range) == 1:
-            day = date_range[0]
-            if day not in st.session_state['team'][selected_doc]['vacation_days']:
-                st.session_state['team'][selected_doc]['vacation_days'].append(day)
-                if trigger_cloud_save(): 
-                    st.sidebar.success(f"Away date successfully saved for {selected_doc}!")
-                    st.rerun()
-    else:
-        if date_range not in st.session_state['team'][selected_doc]['vacation_days']:
-            st.session_state['team'][selected_doc]['vacation_days'].append(date_range)
-            if trigger_cloud_save(): 
-                st.sidebar.success(f"Away date successfully saved for {selected_doc}!")
-                st.rerun()
-
-# Display current away list strictly for the selected doctor
-current_vacations = st.session_state['team'][selected_doc].get('vacation_days', [])
-if current_vacations:
-    current_vacations.sort()
-    dates_to_remove = st.sidebar.multiselect(
-        f"Remove logged dates for {selected_doc.split(' ')[-1]}:", 
-        options=current_vacations,
-        format_func=lambda x: x.strftime('%m/%d/%Y'),
-        key=f"remove_select_{selected_doc}"
-    )
-    if st.sidebar.button("❌ Remove Selected"):
-        for d in dates_to_remove:
-            st.session_state['team'][selected_doc]['vacation_days'].remove(d)
-        if trigger_cloud_save(): 
-            st.sidebar.success("Dates deleted cleanly.")
-            st.rerun()
+if st.sidebar.button("Add Holiday"):
+    if custom_holiday_name:
+        key = (custom_holiday_date.month, custom_holiday_date.day)
+        st.session_state['custom_holidays'][key] = custom_holiday_name
+        if trigger_cloud_save():
+            st.sidebar.success(f"Added: {custom_holiday_name}")
 
 # --- MAIN APP: GENERATE SHIFTS ---
 st.title("📅 On-Call Scheduler")
@@ -189,8 +134,10 @@ if st.button("Generate Master Schedule", type="secondary"):
     st.session_state['cal_month'] = start_date.month
     st.session_state['cal_year'] = start_date.year
 
+    core_physicians_only = [name for name, specs in st.session_state['team'].items() if specs['is_core']]
+    
     if len(core_physicians_only) < 2:
-        st.error("Please ensure you have at least 2 Core Physicians configured in the database layout.")
+        st.error("Please ensure you have at least 2 Core Physicians configured.")
     else:
         schedule_data = []
         current_friday = start_date + timedelta(days=(4 - start_date.weekday()) % 7)
@@ -210,21 +157,8 @@ if st.button("Generate Master Schedule", type="secondary"):
             elif check_is_holiday(fri):
                 weekend_label = f"Long Weekend ({get_holiday_name(fri)})"
 
-            # Weekend Rotation Check
             assigned_weekend_doc = core_physicians_only[core_idx % len(core_physicians_only)]
             
-            weekend_vacation = False
-            w_check = fri
-            while w_check < weekend_end_date:
-                if w_check in st.session_state['team'][assigned_weekend_doc]['vacation_days']:
-                    weekend_vacation = True
-                    break
-                w_check += timedelta(days=1)
-                
-            if weekend_vacation:
-                alt_weekend_docs = [d for d in core_physicians_only if d != assigned_weekend_doc]
-                assigned_weekend_doc = alt_weekend_docs[0] if alt_weekend_docs else assigned_weekend_doc
-
             schedule_data.append({
                 "Start Date": fri,
                 "End Date": weekend_end_date - timedelta(days=1),
@@ -233,31 +167,16 @@ if st.button("Generate Master Schedule", type="secondary"):
                 "Assigned Physician": assigned_weekend_doc
             })
             
-            # Weekday Block Rotation Check
             primary_weekday_doc = core_physicians_only[(core_idx + 1) % len(core_physicians_only)]
             weekday_start = weekend_end_date
             next_friday = fri + timedelta(days=7)
-            
-            weekday_vacation = False
-            current_check = weekday_start
-            while current_check < next_friday:
-                if current_check in st.session_state['team'][primary_weekday_doc]['vacation_days']:
-                    weekday_vacation = True
-                    break
-                current_check += timedelta(days=1)
-            
-            if weekday_vacation:
-                alternatives = [doc for doc in core_physicians_only if doc != primary_weekday_doc]
-                assigned_weekday_doc = alternatives[0] if alternatives else primary_weekday_doc
-            else:
-                assigned_weekday_doc = primary_weekday_doc
             
             schedule_data.append({
                 "Start Date": weekday_start,
                 "End Date": next_friday - timedelta(days=1),
                 "Time Window": f"{weekday_start.strftime('%m/%d')} (8 AM) to {next_friday.strftime('%m/%d')} (12 PM)",
                 "Shift Type": "Weekday Core Block",
-                "Assigned Physician": assigned_weekday_doc
+                "Assigned Physician": primary_weekday_doc
             })
             
             core_idx += 1
@@ -301,7 +220,7 @@ if not st.session_state['schedule'].empty:
         if st.button("💾 LOCK IN & SYNC GRID EDITS", type="primary"):
             st.session_state['schedule']["Assigned Physician"] = edited_df["Assigned Physician"]
             if trigger_cloud_save():
-                st.success("Changes Locked and Synced Live to Database!")
+                st.success("Changes Locked and Synced Live to Database! Physicians will now see this updated information.")
                 st.rerun()
 
     with tab2:

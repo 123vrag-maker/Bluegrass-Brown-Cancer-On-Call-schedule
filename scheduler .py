@@ -45,9 +45,9 @@ if 'system_loaded' not in st.session_state:
     # Strict allocation: Initialize independent memory banks for every doctor
     st.session_state['team'] = {
         'Dr. Vijay Raghavan': {'vacation_days': [], 'is_core': True},
-        'Dr. CoreTwo': {'vacation_days': [], 'is_core': True},
-        'Dr. CoverageAlpha': {'vacation_days': [], 'is_core': False},
-        'Dr. CoverageBeta': {'vacation_days': [], 'is_core': False}
+        'Dr. Iltaf Khan': {'vacation_days': [], 'is_core': True},
+        'Dr. Rohit Kumar': {'vacation_days': [], 'is_core': False},
+        'Dr. Abigail Chan': {'vacation_days': [], 'is_core': False}
     }
     st.session_state['custom_holidays'] = {}
     st.session_state['schedule'] = pd.DataFrame()

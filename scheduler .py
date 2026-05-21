@@ -4,77 +4,89 @@ from datetime import date, timedelta
 import holidays  
 import calendar
 import json
+from github import Github
 
 # --- INITIAL APP SETUP & STATE CONFIGURATION ---
 st.set_page_config(page_title="Physician On-Call Scheduler", layout="wide")
+DATA_FILE = "BBCC_master_data.json"
 
-# Pre-populate your stable hospital roster structure layout
-if 'team' not in st.session_state:
-    st.session_state['team'] = {
-        'Dr. Vijay Raghavan': {'vacation_days': [], 'is_core': True},
-        'Dr. Iltaf Khan': {'vacation_days': [], 'is_core': True},
-        'Dr. Rohit Kumar': {'vacation_days': [], 'is_core': False},
-        'Dr. Abigail Chan': {'vacation_days': [], 'is_core': False}
-    }
+# --- SECURE GITHUB DATABASE CONNECTION ---
+def load_data_from_github():
+    """Pulls the live master schedule directly from the GitHub repository."""
+    try:
+        g = Github(st.secrets["GITHUB_TOKEN"])
+        repo = g.get_repo(st.secrets["GITHUB_REPO"])
+        file_content = repo.get_contents(DATA_FILE)
+        data = json.loads(file_content.decoded_content.decode("utf-8"))
+        return data, file_content.sha
+    except Exception as e:
+        # Returns None if the file doesn't exist yet
+        return None, None
 
-if 'custom_holidays' not in st.session_state:
-    st.session_state['custom_holidays'] = {}
+def save_data_to_github(data_dict):
+    """Silently commits updates directly to the GitHub repository."""
+    try:
+        g = Github(st.secrets["GITHUB_TOKEN"])
+        repo = g.get_repo(st.secrets["GITHUB_REPO"])
+        content_str = json.dumps(data_dict, indent=4)
+        
+        # Check if file exists to either update or create
+        try:
+            file_content = repo.get_contents(DATA_FILE)
+            repo.update_file(DATA_FILE, "Auto-save schedule update", content_str, file_content.sha)
+        except:
+            repo.create_file(DATA_FILE, "Initial schedule creation", content_str)
+        return True
+    except Exception as e:
+        st.error(f"Failed to connect to GitHub. Please check your Streamlit Secrets. Error: {e}")
+        return False
 
-if 'schedule' not in st.session_state:
-    st.session_state['schedule'] = pd.DataFrame()
-
-# Infinite Calendar Setup
-if 'cal_month' not in st.session_state:
+# --- LOAD SYSTEM STATE ---
+if 'system_loaded' not in st.session_state:
+    db_data, file_sha = load_data_from_github()
+    
+    if db_data:
+        # Load Team
+        team = {}
+        for doc, info in db_data.get('team', {}).items():
+            v_days = [date.fromisoformat(d) for d in info.get('vacation_days', [])]
+            team[doc] = {'vacation_days': v_days, 'is_core': info.get('is_core', True)}
+        st.session_state['team'] = team
+        
+        # Load Holidays
+        hols = {}
+        for k, v in db_data.get('custom_holidays', {}).items():
+            m, d = map(int, k.split('-'))
+            hols[(m, d)] = v
+        st.session_state['custom_holidays'] = hols
+        
+        # Load Schedule
+        sched_list = db_data.get('schedule', [])
+        if sched_list:
+            df = pd.DataFrame(sched_list)
+            df["Start Date"] = pd.to_datetime(df["Start Date"]).dt.date
+            df["End Date"] = pd.to_datetime(df["End Date"]).dt.date
+            st.session_state['schedule'] = df
+        else:
+            st.session_state['schedule'] = pd.DataFrame()
+            
+    else:
+        # Fresh Setup Default Roster
+        st.session_state['team'] = {
+            'Dr. Vijay Raghavan': {'vacation_days': [], 'is_core': True},
+            'Dr. Iltaf Khan': {'vacation_days': [], 'is_core': True},
+            'Dr. Rohit Kumar': {'vacation_days': [], 'is_core': False},
+            'Dr. Abigail Chan': {'vacation_days': [], 'is_core': False}
+        }
+        st.session_state['custom_holidays'] = {}
+        st.session_state['schedule'] = pd.DataFrame()
+        
+    st.session_state['system_loaded'] = True
     st.session_state['cal_month'] = date.today().month
     st.session_state['cal_year'] = date.today().year
 
-# --- FIXED PRINT CSS (Landscape & Auto-Scale) ---
-st.markdown("""
-<style>
-    @media print {
-        @page {
-            size: landscape; /* Forces horizontal printing to prevent bottom cutoff */
-            margin: 10mm;
-        }
-        
-        /* Hide sidebars, top headers, tab navigation, and buttons */
-        [data-testid="stSidebar"], 
-        header[data-testid="stHeader"], 
-        .stTabs [role="tablist"],
-        [data-testid="stToolbar"],
-        button {
-            display: none !important;
-        }
-        
-        /* Force the main container to take up the full printed page */
-        .main .block-container {
-            max-width: 100% !important;
-            padding: 0 !important;
-            margin: 0 !important;
-        }
-        
-        /* Ensure table fits and does not break badly */
-        table { 
-            width: 100% !important;
-            page-break-inside: auto !important; 
-        }
-        tr { 
-            page-break-inside: avoid !important; 
-            page-break-after: auto !important;
-        }
-        
-        /* Scale down the entire calendar slightly to guarantee it fits */
-        .print-container {
-            zoom: 0.95;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
-        }
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# --- BACKUP & RESTORE UTILITIES ---
-def generate_backup_file():
+# Helper to bundle and save current state
+def trigger_cloud_save():
     schedule_data = []
     if not st.session_state['schedule'].empty:
         for _, row in st.session_state['schedule'].iterrows():
@@ -87,7 +99,6 @@ def generate_backup_file():
             })
             
     export_data = {'team': {}, 'custom_holidays': {}, 'schedule': schedule_data}
-    
     for doc, info in st.session_state['team'].items():
         export_data['team'][doc] = {
             'vacation_days': [d.isoformat() for d in info['vacation_days']],
@@ -96,58 +107,26 @@ def generate_backup_file():
     for k, v in st.session_state['custom_holidays'].items():
         export_data['custom_holidays'][f"{k[0]:02d}-{k[1]:02d}"] = v
         
-    return json.dumps(export_data, indent=4)
+    return save_data_to_github(export_data)
 
-def process_uploaded_backup(uploaded_file):
-    try:
-        data = json.load(uploaded_file)
-        
-        team = {}
-        for doc, info in data.get('team', {}).items():
-            v_days = [date.fromisoformat(d) for d in info.get('vacation_days', [])]
-            team[doc] = {'vacation_days': v_days, 'is_core': info.get('is_core', True)}
-        st.session_state['team'] = team
-        
-        hols = {}
-        for k, v in data.get('custom_holidays', {}).items():
-            m, d = map(int, k.split('-'))
-            hols[(m, d)] = v
-        st.session_state['custom_holidays'] = hols
-        
-        sched_list = data.get('schedule', [])
-        if sched_list:
-            df = pd.DataFrame(sched_list)
-            df["Start Date"] = pd.to_datetime(df["Start Date"]).dt.date
-            df["End Date"] = pd.to_datetime(df["End Date"]).dt.date
-            st.session_state['schedule'] = df
-        else:
-            st.session_state['schedule'] = pd.DataFrame()
-            
-        st.success("✅ System successfully restored from backup!")
-    except Exception as e:
-        st.error("Error reading backup file. Please ensure it is a valid schedule JSON.")
+
+# --- PRINT CSS ---
+st.markdown("""
+<style>
+    @media print {
+        @page { size: landscape; margin: 10mm; }
+        [data-testid="stSidebar"], header[data-testid="stHeader"], .stTabs [role="tablist"], [data-testid="stToolbar"], button { display: none !important; }
+        .main .block-container { max-width: 100% !important; padding: 0 !important; margin: 0 !important; }
+        table { width: 100% !important; page-break-inside: auto !important; }
+        tr { page-break-inside: avoid !important; page-break-after: auto !important; }
+        .print-container { zoom: 0.75; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # --- SIDEBAR: MANAGEMENT ---
-st.sidebar.header("⚙️ Settings & Storage")
+st.sidebar.header("⚙️ Roster Settings")
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("💾 Cloud Backup Manager")
-st.sidebar.caption("Streamlit cloud servers reset periodically. Download your file to save changes permanently. Upload it here if the schedule clears.")
-
-st.sidebar.download_button(
-    label="⬇️ Download Master Backup File",
-    data=generate_backup_file(),
-    file_name=f"BBCC_Schedule_Backup_{date.today().strftime('%Y_%m_%d')}.json",
-    mime="application/json"
-)
-
-uploaded_backup = st.sidebar.file_uploader("⬆️ Restore from Backup", type=['json'])
-if uploaded_backup is not None:
-    if st.sidebar.button("Apply Uploaded Backup"):
-        process_uploaded_backup(uploaded_backup)
-        st.rerun()
-
-# Manage Away Dates
 st.sidebar.markdown("---")
 st.sidebar.subheader("🌴 Manage Away Dates")
 selected_doc = st.sidebar.selectbox("Select Physician", options=list(st.session_state['team'].keys()))
@@ -162,16 +141,16 @@ if st.sidebar.button("➕ Log Away Date(s)"):
                 day = start_d + timedelta(days=i)
                 if day not in st.session_state['team'][selected_doc]['vacation_days']:
                     st.session_state['team'][selected_doc]['vacation_days'].append(day)
-            st.sidebar.success("Block logged. Remember to Download Backup!")
+            if trigger_cloud_save(): st.sidebar.success("Block successfully synced to cloud!")
         elif len(date_range) == 1:
             day = date_range[0]
             if day not in st.session_state['team'][selected_doc]['vacation_days']:
                 st.session_state['team'][selected_doc]['vacation_days'].append(day)
-                st.sidebar.success("Date logged. Remember to Download Backup!")
+                if trigger_cloud_save(): st.sidebar.success("Date successfully synced to cloud!")
     else:
         if date_range not in st.session_state['team'][selected_doc]['vacation_days']:
             st.session_state['team'][selected_doc]['vacation_days'].append(date_range)
-            st.sidebar.success("Date logged. Remember to Download Backup!")
+            if trigger_cloud_save(): st.sidebar.success("Date successfully synced to cloud!")
 
 current_vacations = st.session_state['team'][selected_doc].get('vacation_days', [])
 if current_vacations:
@@ -184,8 +163,9 @@ if current_vacations:
     if st.sidebar.button("❌ Remove Selected"):
         for d in dates_to_remove:
             st.session_state['team'][selected_doc]['vacation_days'].remove(d)
-        st.sidebar.success("Dates removed. Remember to Download Backup!")
-        st.rerun()
+        if trigger_cloud_save(): 
+            st.sidebar.success("Dates removed from cloud.")
+            st.rerun()
 
 # --- MAIN APP: GENERATE SHIFTS ---
 st.title("📅 On-Call Scheduler")
@@ -197,16 +177,10 @@ with col2:
     num_weeks = st.number_input("Duration (Weeks)", min_value=1, value=4, key="main_duration")
 
 us_holidays = holidays.US(years=[date.today().year, date.today().year + 1])
-def check_is_holiday(dt):
-    return dt in us_holidays or (dt.month, dt.day) in st.session_state['custom_holidays']
-
-def get_holiday_name(dt):
-    if dt in us_holidays:
-        return us_holidays.get(dt)
-    return st.session_state['custom_holidays'].get((dt.month, dt.day), "Holiday")
+def check_is_holiday(dt): return dt in us_holidays or (dt.month, dt.day) in st.session_state['custom_holidays']
+def get_holiday_name(dt): return us_holidays.get(dt) if dt in us_holidays else st.session_state['custom_holidays'].get((dt.month, dt.day), "Holiday")
 
 if st.button("Generate Master Schedule"):
-    # Set calendar to snap to the month of the generated schedule automatically
     st.session_state['cal_month'] = start_date.month
     st.session_state['cal_year'] = start_date.year
 
@@ -273,7 +247,8 @@ if st.button("Generate Master Schedule"):
             current_friday = next_friday
 
         st.session_state['schedule'] = pd.DataFrame(schedule_data)
-        st.rerun()
+        if trigger_cloud_save():
+            st.rerun()
 
 # --- DISPLAY CONFIGURATION ---
 st.markdown("---")
@@ -287,8 +262,7 @@ if not st.session_state['schedule'].empty:
         st.caption("Instructions: Make your edits in the grid. **When finished, click the blue LOCK button below.**")
         
         def color_rows(row):
-            if "Weekend" in row["Shift Type"]:
-                return ['background-color: #f7f9fc; font-weight: bold'] * len(row)
+            if "Weekend" in row["Shift Type"]: return ['background-color: #f7f9fc; font-weight: bold'] * len(row)
             return [''] * len(row)
 
         display_df = st.session_state['schedule'][["Time Window", "Shift Type", "Assigned Physician"]]
@@ -306,15 +280,15 @@ if not st.session_state['schedule'].empty:
             key="grid_editor"
         )
         
-        # THE BIG LOCK BUTTON IS BACK
-        if st.button("💾 LOCK IN GRID EDITS", type="primary"):
+        if st.button("💾 LOCK IN & SYNC GRID EDITS", type="primary"):
             st.session_state['schedule']["Assigned Physician"] = edited_df["Assigned Physician"]
-            st.success("Changes Locked! You can now securely 'Download Master Backup File' in the sidebar.")
-            st.rerun()
+            if trigger_cloud_save():
+                st.success("Changes Locked and Synced to GitHub Database! Physicians will now see this live.")
+                st.rerun()
 
     with tab2:
         st.subheader("Monthly On-Call Distribution")
-        st.caption("🖨️ **To Print:** Press `Ctrl + P` (Windows) or `Cmd + P` (Mac). The layout will automatically print horizontally (Landscape) to prevent cutoff.")
+        st.caption("🖨️ **To Print:** Press `Ctrl + P` (Windows) or `Cmd + P` (Mac). The layout will automatically print horizontally at 75% scale.")
         
         nav_col1, nav_col2, nav_col3 = st.columns([1, 2, 1])
         with nav_col1:
@@ -336,7 +310,6 @@ if not st.session_state['schedule'].empty:
 
         st.markdown('<div class="print-container">', unsafe_allow_html=True)
         
-        # THE FIX: Force dates to proper 'datetime.date' objects so they match the calendar generator
         lookup = {}
         for _, row in st.session_state['schedule'].iterrows():
             d_start = pd.to_datetime(row["Start Date"]).date()
@@ -362,7 +335,6 @@ if not st.session_state['schedule'].empty:
         html += "</tr>"
         
         for week_days in month_days:
-            # Removed the rigid 90px height to let the browser size the printed cells naturally
             html += "<tr style='vertical-align:top;'>"
             for d in week_days:
                 if d.month != curr_month:

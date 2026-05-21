@@ -28,11 +28,15 @@ if 'cal_month' not in st.session_state:
     st.session_state['cal_month'] = date.today().month
     st.session_state['cal_year'] = date.today().year
 
-# --- FIXED PRINT CSS ---
-# Instead of hiding the whole body, we precisely target only Streamlit's UI menus
+# --- FIXED PRINT CSS (Landscape & Auto-Scale) ---
 st.markdown("""
 <style>
     @media print {
+        @page {
+            size: landscape; /* Forces horizontal printing to prevent bottom cutoff */
+            margin: 10mm;
+        }
+        
         /* Hide sidebars, top headers, tab navigation, and buttons */
         [data-testid="stSidebar"], 
         header[data-testid="stHeader"], 
@@ -49,9 +53,22 @@ st.markdown("""
             margin: 0 !important;
         }
         
-        /* Ensure table rows do not break across physical pages */
-        tr { page-break-inside: avoid !important; }
-        table { page-break-inside: avoid !important; }
+        /* Ensure table fits and does not break badly */
+        table { 
+            width: 100% !important;
+            page-break-inside: auto !important; 
+        }
+        tr { 
+            page-break-inside: avoid !important; 
+            page-break-after: auto !important;
+        }
+        
+        /* Scale down the entire calendar slightly to guarantee it fits */
+        .print-container {
+            zoom: 0.95;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -113,7 +130,6 @@ def process_uploaded_backup(uploaded_file):
 # --- SIDEBAR: MANAGEMENT ---
 st.sidebar.header("⚙️ Settings & Storage")
 
-# Backup & Restore UI
 st.sidebar.markdown("---")
 st.sidebar.subheader("💾 Cloud Backup Manager")
 st.sidebar.caption("Streamlit cloud servers reset periodically. Download your file to save changes permanently. Upload it here if the schedule clears.")
@@ -268,7 +284,7 @@ if not st.session_state['schedule'].empty:
     
     with tab1:
         st.subheader("Interactive Schedule Grid")
-        st.caption("Instructions: Make your edits in the grid. **When finished, click 'Download Master Backup File' in the sidebar to permanently save your changes.**")
+        st.caption("Instructions: Make your edits in the grid. **When finished, click the blue LOCK button below.**")
         
         def color_rows(row):
             if "Weekend" in row["Shift Type"]:
@@ -290,19 +306,16 @@ if not st.session_state['schedule'].empty:
             key="grid_editor"
         )
         
-        # Apply structural edits immediately to memory
-        if "grid_editor" in st.session_state:
-            grid_changes = st.session_state["grid_editor"].get("edited_rows", {})
-            if grid_changes:
-                for r_idx, v_changes in grid_changes.items():
-                    if "Assigned Physician" in v_changes:
-                        st.session_state['schedule'].at[int(r_idx), "Assigned Physician"] = v_changes["Assigned Physician"]
+        # THE BIG LOCK BUTTON IS BACK
+        if st.button("💾 LOCK IN GRID EDITS", type="primary"):
+            st.session_state['schedule']["Assigned Physician"] = edited_df["Assigned Physician"]
+            st.success("Changes Locked! You can now securely 'Download Master Backup File' in the sidebar.")
+            st.rerun()
 
     with tab2:
         st.subheader("Monthly On-Call Distribution")
-        st.caption("🖨️ **To Print:** Press `Ctrl + P` (Windows) or `Cmd + P` (Mac) to open your system print dialog. The document is automatically styled to only print the calendar below.")
+        st.caption("🖨️ **To Print:** Press `Ctrl + P` (Windows) or `Cmd + P` (Mac). The layout will automatically print horizontally (Landscape) to prevent cutoff.")
         
-        # --- FIXED CALENDAR PAGINATION ---
         nav_col1, nav_col2, nav_col3 = st.columns([1, 2, 1])
         with nav_col1:
             if st.button("⬅️ Previous Month"):
@@ -323,16 +336,16 @@ if not st.session_state['schedule'].empty:
 
         st.markdown('<div class="print-container">', unsafe_allow_html=True)
         
+        # THE FIX: Force dates to proper 'datetime.date' objects so they match the calendar generator
         lookup = {}
         for _, row in st.session_state['schedule'].iterrows():
-            d_start = row["Start Date"]
-            d_end = row["End Date"]
+            d_start = pd.to_datetime(row["Start Date"]).date()
+            d_end = pd.to_datetime(row["End Date"]).date()
             curr = d_start
             while curr <= d_end:
                 lookup[curr] = (row["Assigned Physician"], row["Shift Type"])
                 curr += timedelta(days=1)
                 
-        # Render the specific selected month
         curr_year = st.session_state['cal_year']
         curr_month = st.session_state['cal_month']
         target_date = date(curr_year, curr_month, 1)
@@ -349,10 +362,11 @@ if not st.session_state['schedule'].empty:
         html += "</tr>"
         
         for week_days in month_days:
-            html += "<tr style='height:90px; vertical-align:top;'>"
+            # Removed the rigid 90px height to let the browser size the printed cells naturally
+            html += "<tr style='vertical-align:top;'>"
             for d in week_days:
                 if d.month != curr_month:
-                    html += "<td style='border:1px solid #dee2e6; background-color:#fafafa; color:#adb5bd; padding:6px;'></td>"
+                    html += "<td style='border:1px solid #dee2e6; background-color:#fafafa; color:#adb5bd; padding:6px; min-height:80px;'></td>"
                 else:
                     bg = "#ffffff"
                     content = ""
@@ -370,7 +384,7 @@ if not st.session_state['schedule'].empty:
                         bg = "#ffe3e3"
                         content += f"<div style='font-size:10px; color:#dc2626; font-weight:bold;'>{get_holiday_name(d)}</div>"
                         
-                    html += f"<td style='border:1px solid #dee2e6; background-color:{bg}; padding:6px;'>"
+                    html += f"<td style='border:1px solid #dee2e6; background-color:{bg}; padding:6px; min-height:80px;'>"
                     html += f"<span style='font-size:12px; font-weight:bold; color:#475569;'>{d.day}</span>"
                     html += content
                     html += "</td>"

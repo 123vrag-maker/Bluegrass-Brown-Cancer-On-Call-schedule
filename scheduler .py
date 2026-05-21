@@ -41,9 +41,9 @@ def save_data_to_github(data_dict):
 if 'system_loaded' not in st.session_state:
     st.session_state['team'] = {
         'Dr. Vijay Raghavan': {'is_core': True},
-        'Dr. CoreTwo': {'is_core': True},
-        'Dr. CoverageAlpha': {'is_core': False},
-        'Dr. CoverageBeta': {'is_core': False}
+        'Dr. Itaf Khan': {'is_core': True},
+        'Dr. Rohit Kumar': {'is_core': False},
+        'Dr. Abigail Chan': {'is_core': False}
     }
     st.session_state['custom_holidays'] = {}
     st.session_state['schedule'] = pd.DataFrame()

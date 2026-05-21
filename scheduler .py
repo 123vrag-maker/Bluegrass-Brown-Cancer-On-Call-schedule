@@ -12,7 +12,6 @@ DATA_FILE = "BBCC_master_data.json"
 
 # --- SECURE GITHUB DATABASE CONNECTION ---
 def load_data_from_github():
-    """Pulls the live master data directly from the GitHub repository branch."""
     try:
         g = Github(st.secrets["GITHUB_TOKEN"])
         repo = g.get_repo(st.secrets["GITHUB_REPO"])
@@ -20,22 +19,18 @@ def load_data_from_github():
         data = json.loads(file_content.decoded_content.decode("utf-8"))
         return data
     except Exception as e:
-        # File doesn't exist yet or repository is fresh
         return None
 
 def save_data_to_github(data_dict):
-    """Forcefully writes and commits updates directly to the GitHub repository."""
     try:
         g = Github(st.secrets["GITHUB_TOKEN"])
         repo = g.get_repo(st.secrets["GITHUB_REPO"])
         content_str = json.dumps(data_dict, indent=4)
         
-        # Real-time fingerprint fetching to prevent write blocks
         try:
             file_content = repo.get_contents(DATA_FILE)
             repo.update_file(DATA_FILE, "Update on-call data roster", content_str, file_content.sha)
         except Exception:
-            # Create the file cleanly if it is missing from the repository root
             repo.create_file(DATA_FILE, "Initialize on-call data roster", content_str)
         return True
     except Exception as e:
@@ -47,21 +42,18 @@ if 'system_loaded' not in st.session_state:
     db_data = load_data_from_github()
     
     if db_data:
-        # Re-link Team configuration arrays
         team = {}
         for doc, info in db_data.get('team', {}).items():
             v_days = [date.fromisoformat(d) for d in info.get('vacation_days', [])]
             team[doc] = {'vacation_days': v_days, 'is_core': info.get('is_core', True)}
         st.session_state['team'] = team
         
-        # Re-link Custom Holidays
         hols = {}
         for k, v in db_data.get('custom_holidays', {}).items():
             m, d = map(int, k.split('-'))
             hols[(m, d)] = v
         st.session_state['custom_holidays'] = hols
         
-        # Re-link Master On-Call Schedule Matrix
         sched_list = db_data.get('schedule', [])
         if sched_list:
             df = pd.DataFrame(sched_list)
@@ -72,7 +64,6 @@ if 'system_loaded' not in st.session_state:
             st.session_state['schedule'] = pd.DataFrame()
             
     else:
-        # Default fallback structure initialization
         st.session_state['team'] = {
             'Dr. Vijay Raghavan': {'vacation_days': [], 'is_core': True},
             'Dr. CoreTwo': {'vacation_days': [], 'is_core': True},
@@ -87,7 +78,6 @@ if 'system_loaded' not in st.session_state:
     st.session_state['cal_year'] = date.today().year
 
 def trigger_cloud_save():
-    """Packages the memory lists cleanly and fires them to the server."""
     schedule_data = []
     if not st.session_state['schedule'].empty:
         for _, row in st.session_state['schedule'].iterrows():
@@ -165,22 +155,24 @@ if current_vacations:
             st.session_state['team'][selected_doc]['vacation_days'].remove(d)
         if trigger_cloud_save(): 
             st.sidebar.success("Dates deleted from online system.")
-            st.sidebar.rerun()
+            st.rerun()
 
 # --- MAIN APP: GENERATE SHIFTS ---
 st.title("📅 On-Call Scheduler")
 
 col1, col2 = st.columns(2)
 with col1:
-    start_date = st.date_input("Schedule Start Date (Choose a Friday)", date.today(), key="main_start_date")
+    st.markdown("**1. Choose Your Launch Date:**")
+    start_date = st.date_input("Schedule Start Date (Choose a Friday)", date.today(), label_visibility="collapsed", key="main_start_date")
 with col2:
-    num_weeks = st.number_input("Duration (Weeks)", min_value=1, value=4, key="main_duration")
+    st.markdown("**2. How many weeks to generate?**")
+    num_weeks = st.number_input("Duration (Weeks)", min_value=1, value=4, label_visibility="collapsed", key="main_duration")
 
 us_holidays = holidays.US(years=[date.today().year, date.today().year + 1])
 def check_is_holiday(dt): return dt in us_holidays or (dt.month, dt.day) in st.session_state['custom_holidays']
 def get_holiday_name(dt): return us_holidays.get(dt) if dt in us_holidays else st.session_state['custom_holidays'].get((dt.month, dt.day), "Holiday")
 
-if st.button("Generate Master Schedule"):
+if st.button("Generate Master Schedule", type="secondary"):
     st.session_state['cal_month'] = start_date.month
     st.session_state['cal_year'] = start_date.year
 
@@ -259,7 +251,7 @@ if not st.session_state['schedule'].empty:
     
     with tab1:
         st.subheader("Interactive Schedule Grid")
-        st.caption("Instructions: Make your adjustments inside the spreadsheet columns. **When finished, click the LOCK button below to sync modifications live.**")
+        st.caption("Instructions: Make your adjustments inside the spreadsheet columns. **When finished, click the blue LOCK button below to sync modifications live.**")
         
         def color_rows(row): 
             if "Weekend" in row["Shift Type"]: return ['background-color: #f7f9fc; font-weight: bold'] * len(row)
@@ -267,9 +259,11 @@ if not st.session_state['schedule'].empty:
 
         display_df = st.session_state['schedule'][["Time Window", "Shift Type", "Assigned Physician"]]
         
+        # --- FIXED PARAMETER: Added height=600 to force table extension and enable inner frame scrolling ---
         edited_df = st.data_editor(
             display_df.style.apply(color_rows, axis=1),
             use_container_width=True,
+            height=600,
             column_config={
                 "Assigned Physician": st.column_config.SelectboxColumn(
                     "On-Call Doctor",
